@@ -1,0 +1,140 @@
+name: Staging Deploy
+
+# Builds the gateway image, pushes to GCP Artifact Registry,
+# and deploys to the EU Hetzner server.
+#
+# Triggers:
+#   - Push to main  → tag "staging", deploy automatically
+#   - Version tag    → tag "v*", deploy automatically
+#   - Manual         → workflow_dispatch with optional tag override
+#
+# Required GitHub Secrets:
+#   GCP_SA_KEY       – JSON key for openclaw-registry-writer service account
+#   HETZNER_SSH_KEY  – Private key for root@89.167.70.46
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+      - "**/*.mdx"
+      - ".agents/**"
+      - "skills/**"
+  workflow_dispatch:
+    inputs:
+      deploy_tag:
+        description: "Image tag override (default: git-derived)"
+        required: false
+
+concurrency:
+  group: staging-deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  REGISTRY: europe-west1-docker.pkg.dev
+  IMAGE: europe-west1-docker.pkg.dev/gold-verve-459312-e7/openclaw-gateway/gateway
+  EU_SERVER: 89.167.70.46
+  DEPLOY_SCRIPT: /opt/openclaw-ops/scripts/deploy.sh
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    outputs:
+      image-tag: ${{ steps.resolve-tag.outputs.tag }}
+      full-image: ${{ steps.resolve-tag.outputs.full }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve image tag
+        id: resolve-tag
+        run: |
+          set -euo pipefail
+          # Manual override takes priority
+          if [[ -n "${{ inputs.deploy_tag || '' }}" ]]; then
+            TAG="${{ inputs.deploy_tag }}"
+          elif [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            TAG="${GITHUB_REF#refs/tags/}"
+          elif [[ "${GITHUB_REF}" == "refs/heads/main" ]]; then
+            TAG="staging"
+          else
+            echo "::error::Cannot resolve tag for ref ${GITHUB_REF}"
+            exit 1
+          fi
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "full=${IMAGE}:${TAG}" >> "$GITHUB_OUTPUT"
+          echo "### 🏷️ Image tag: \`${TAG}\`" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Authenticate to GCP Artifact Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: _json_key
+          password: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          tags: |
+            ${{ steps.resolve-tag.outputs.full }}
+            ${{ env.IMAGE }}:${{ github.sha }}
+          cache-from: type=registry,ref=${{ env.IMAGE }}-cache:buildcache
+          cache-to: type=registry,ref=${{ env.IMAGE }}-cache:buildcache,mode=max
+          provenance: false
+          push: true
+
+      - name: Summary
+        run: |
+          echo "### ✅ Image pushed" >> "$GITHUB_STEP_SUMMARY"
+          echo "\`${{ steps.resolve-tag.outputs.full }}\`" >> "$GITHUB_STEP_SUMMARY"
+
+  deploy-eu:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Deploy to EU server
+        env:
+          SSH_KEY: ${{ secrets.HETZNER_SSH_KEY }}
+          TAG: ${{ needs.build-and-push.outputs.image-tag }}
+        run: |
+          set -euo pipefail
+
+          # Write SSH key
+          mkdir -p ~/.ssh
+          echo "$SSH_KEY" > ~/.ssh/hetzner
+          chmod 600 ~/.ssh/hetzner
+
+          SSH_CMD="ssh -i ~/.ssh/hetzner -o StrictHostKeyChecking=no -o IdentitiesOnly=yes root@${EU_SERVER}"
+
+          echo "### 🚀 Deploying \`${TAG}\` to EU server" >> "$GITHUB_STEP_SUMMARY"
+
+          # Pull the new image
+          $SSH_CMD "docker pull ${IMAGE}:${TAG}"
+
+          # Run deploy script (updates each agent's docker.env and restarts)
+          $SSH_CMD "${DEPLOY_SCRIPT} ${TAG}"
+
+          echo "### ✅ Deploy complete" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Verify containers are running
+        env:
+          SSH_KEY: ${{ secrets.HETZNER_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$SSH_KEY" > ~/.ssh/hetzner
+          chmod 600 ~/.ssh/hetzner
+
+          SSH_CMD="ssh -i ~/.ssh/hetzner -o StrictHostKeyChecking=no -o IdentitiesOnly=yes root@${EU_SERVER}"
+
+          echo "### 🔍 Container status" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          $SSH_CMD "docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}' | grep -E 'openclaw|gateway'" >> "$GITHUB_STEP_SUMMARY" || echo "No matching containers found" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
