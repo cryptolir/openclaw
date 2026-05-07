@@ -282,8 +282,17 @@ async function discoverVllmModels(
 
 function normalizeApiKeyConfig(value: string): string {
   const trimmed = value.trim();
-  const match = /^\$\{([A-Z0-9_]+)\}$/.exec(trimmed);
-  return match?.[1] ?? trimmed;
+  // Already wrapped: keep as-is so env-substitution.ts resolves it on read.
+  if (/^\$\{[A-Z0-9_]+\}$/.test(trimmed)) {
+    return trimmed;
+  }
+  // Bare env-var name (e.g. "VENICE_API_KEY"): wrap so env-substitution resolves it.
+  // Without the wrapping, pi-ai would treat the literal name as the API key value.
+  if (/^[A-Z][A-Z0-9_]{1,63}$/.test(trimmed) && trimmed.includes("_")) {
+    return `\${${trimmed}}`;
+  }
+  // Anything else (literal API key, etc.): keep as-is.
+  return trimmed;
 }
 
 function resolveEnvApiKeyVarName(provider: string): string | undefined {
@@ -293,6 +302,17 @@ function resolveEnvApiKeyVarName(provider: string): string | undefined {
   }
   const match = /^(?:env: |shell env: )([A-Z0-9_]+)$/.exec(resolved.source);
   return match ? match[1] : undefined;
+}
+
+/**
+ * Same as resolveEnvApiKeyVarName, but wraps the env-var name in `${...}` so
+ * the value written into models.json is interpreted as an env-var reference
+ * by `env-substitution.ts` on subsequent config reads. Without the wrapping,
+ * pi-ai treats the bare env-var name as the literal API key string.
+ */
+function resolveEnvApiKeyRef(provider: string): string | undefined {
+  const name = resolveEnvApiKeyVarName(provider);
+  return name ? `\${${name}}` : undefined;
 }
 
 function resolveAwsSdkApiKeyVarName(): string {
@@ -360,7 +380,7 @@ export function normalizeProviders(params: {
     const normalizedKey = key.trim();
     let normalizedProvider = provider;
 
-    // Fix common misconfig: apiKey set to "${ENV_VAR}" instead of "ENV_VAR".
+    // Normalise apiKey to the `${ENV_VAR}` template form so env-substitution.ts resolves it on read.
     if (
       normalizedProvider.apiKey &&
       normalizeApiKeyConfig(normalizedProvider.apiKey) !== normalizedProvider.apiKey
@@ -666,7 +686,7 @@ export async function resolveImplicitProviders(params: {
   });
 
   const minimaxKey =
-    resolveEnvApiKeyVarName("minimax") ??
+    resolveEnvApiKeyRef("minimax") ??
     resolveApiKeyFromProfiles({ provider: "minimax", store: authStore });
   if (minimaxKey) {
     providers.minimax = { ...buildMinimaxProvider(), apiKey: minimaxKey };
@@ -681,21 +701,21 @@ export async function resolveImplicitProviders(params: {
   }
 
   const moonshotKey =
-    resolveEnvApiKeyVarName("moonshot") ??
+    resolveEnvApiKeyRef("moonshot") ??
     resolveApiKeyFromProfiles({ provider: "moonshot", store: authStore });
   if (moonshotKey) {
     providers.moonshot = { ...buildMoonshotProvider(), apiKey: moonshotKey };
   }
 
   const syntheticKey =
-    resolveEnvApiKeyVarName("synthetic") ??
+    resolveEnvApiKeyRef("synthetic") ??
     resolveApiKeyFromProfiles({ provider: "synthetic", store: authStore });
   if (syntheticKey) {
     providers.synthetic = { ...buildSyntheticProvider(), apiKey: syntheticKey };
   }
 
   const veniceKey =
-    resolveEnvApiKeyVarName("venice") ??
+    resolveEnvApiKeyRef("venice") ??
     resolveApiKeyFromProfiles({ provider: "venice", store: authStore });
   if (veniceKey) {
     providers.venice = { ...(await buildVeniceProvider()), apiKey: veniceKey };
@@ -710,7 +730,7 @@ export async function resolveImplicitProviders(params: {
   }
 
   const xiaomiKey =
-    resolveEnvApiKeyVarName("xiaomi") ??
+    resolveEnvApiKeyRef("xiaomi") ??
     resolveApiKeyFromProfiles({ provider: "xiaomi", store: authStore });
   if (xiaomiKey) {
     providers.xiaomi = { ...buildXiaomiProvider(), apiKey: xiaomiKey };
@@ -731,7 +751,7 @@ export async function resolveImplicitProviders(params: {
     if (!baseUrl) {
       continue;
     }
-    const apiKey = resolveEnvApiKeyVarName("cloudflare-ai-gateway") ?? cred.key?.trim() ?? "";
+    const apiKey = resolveEnvApiKeyRef("cloudflare-ai-gateway") ?? cred.key?.trim() ?? "";
     if (!apiKey) {
       continue;
     }
@@ -748,7 +768,7 @@ export async function resolveImplicitProviders(params: {
   // Use the user's configured baseUrl (from explicit providers) for model
   // discovery so that remote / non-default Ollama instances are reachable.
   const ollamaKey =
-    resolveEnvApiKeyVarName("ollama") ??
+    resolveEnvApiKeyRef("ollama") ??
     resolveApiKeyFromProfiles({ provider: "ollama", store: authStore });
   if (ollamaKey) {
     const ollamaBaseUrl = params.explicitProviders?.ollama?.baseUrl;
@@ -759,8 +779,9 @@ export async function resolveImplicitProviders(params: {
   // If explicitly configured, keep user-defined models/settings as-is.
   if (!params.explicitProviders?.vllm) {
     const vllmEnvVar = resolveEnvApiKeyVarName("vllm");
+    const vllmEnvRef = resolveEnvApiKeyRef("vllm");
     const vllmProfileKey = resolveApiKeyFromProfiles({ provider: "vllm", store: authStore });
-    const vllmKey = vllmEnvVar ?? vllmProfileKey;
+    const vllmKey = vllmEnvRef ?? vllmProfileKey;
     if (vllmKey) {
       const discoveryApiKey = vllmEnvVar
         ? (process.env[vllmEnvVar]?.trim() ?? "")
@@ -773,7 +794,7 @@ export async function resolveImplicitProviders(params: {
   }
 
   const togetherKey =
-    resolveEnvApiKeyVarName("together") ??
+    resolveEnvApiKeyRef("together") ??
     resolveApiKeyFromProfiles({ provider: "together", store: authStore });
   if (togetherKey) {
     providers.together = {
@@ -783,7 +804,7 @@ export async function resolveImplicitProviders(params: {
   }
 
   const huggingfaceKey =
-    resolveEnvApiKeyVarName("huggingface") ??
+    resolveEnvApiKeyRef("huggingface") ??
     resolveApiKeyFromProfiles({ provider: "huggingface", store: authStore });
   if (huggingfaceKey) {
     const hfProvider = await buildHuggingfaceProvider(huggingfaceKey);
@@ -794,14 +815,14 @@ export async function resolveImplicitProviders(params: {
   }
 
   const qianfanKey =
-    resolveEnvApiKeyVarName("qianfan") ??
+    resolveEnvApiKeyRef("qianfan") ??
     resolveApiKeyFromProfiles({ provider: "qianfan", store: authStore });
   if (qianfanKey) {
     providers.qianfan = { ...buildQianfanProvider(), apiKey: qianfanKey };
   }
 
   const nvidiaKey =
-    resolveEnvApiKeyVarName("nvidia") ??
+    resolveEnvApiKeyRef("nvidia") ??
     resolveApiKeyFromProfiles({ provider: "nvidia", store: authStore });
   if (nvidiaKey) {
     providers.nvidia = { ...buildNvidiaProvider(), apiKey: nvidiaKey };

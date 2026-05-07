@@ -47,7 +47,7 @@ describe("models-config", () => {
         const parsed = JSON.parse(raw) as {
           providers: Record<string, { apiKey?: string; models?: Array<{ id: string }> }>;
         };
-        expect(parsed.providers.minimax?.apiKey).toBe("MINIMAX_API_KEY");
+        expect(parsed.providers.minimax?.apiKey).toBe("${MINIMAX_API_KEY}");
         const ids = parsed.providers.minimax?.models?.map((model) => model.id);
         expect(ids).toContain("MiniMax-VL-01");
       } finally {
