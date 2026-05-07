@@ -107,6 +107,37 @@ Secrets such as wallet keys, RPC keys, Alchemy keys, and paymaster policy IDs mu
 - Rain Resolver: watches markets and proposes close/resolve actions with approval.
 - Rain Entropy Agent: explores Rain Entropy Layer workflows if docs/API support the requested use case.
 
+## Validation Against AgentGlob Dashboard And OpenClaw
+
+This plan was checked against the current AgentGlob dashboard repo (`/root/projects/openclaw-dashboard`) and OpenClaw gateway repo (`/root/projects/openclaw`). The main fit is good, but the implementation should follow the dashboard's existing primitives instead of adding a parallel agent-creation path.
+
+### Confirmed Fit
+
+- AgentGlob already has a unified Tools tab for Secrets, MCP servers, and Skills in `app/dashboard/[workspaceSlug]/agents/[agentId]/page.tsx`.
+- New-agent deploy already supports `selectedSkills` and copies selected system skills into `/root/.openclaw/agents/{agent}/workspace/skills` via `app/api/agents/deploy/route.ts`.
+- Per-agent skill management already exists in `app/api/agents/[agentId]/skills/route.ts` and regenerates the agent capabilities manifest after changes.
+- Per-agent MCP management already exists in `app/api/agents/[agentId]/mcps/route.ts`, stores MCP servers under `plugins.entries["mcp-bridge"].config.servers`, restarts the container, and regenerates capabilities.
+- New deployments already install/copy the `mcp-bridge` plugin before writing `openclaw.json`, so Rain MCP should integrate through that bridge rather than a new gateway-side MCP runtime.
+- Secrets are already merged into per-agent `docker.env` by `buildDockerEnv()` in `lib/agent-server.ts`; workspace secrets flow into deploy through `listWorkspaceSecrets()` in the deploy route.
+- Dashboard permission checks already gate secret, skill, deploy, and MCP writes through `resolveAgentAccess()` / `hasWorkspaceCapability()` in `lib/permissions.ts`.
+
+### Required Adjustments
+
+- Treat Rain v1 as an AgentGlob dashboard feature composed of existing pieces: system skills, an MCP preset, per-agent secrets, and optional capability metadata. Do not start with a new first-class runtime subsystem.
+- Add Rain to the dashboard MCP preset flow first. The existing MCP API blocks `docker` commands, so the Rain MCP server must run as a binary or Node command available inside the agent container, preferably via the canonical `mcp-bridge` extension path.
+- Do not store wallet private keys, seed phrases, or high-risk signing credentials in MCP arguments. The MCP route already rejects some token-looking args, but Rain needs a stricter allowlist and validation for wallet-related env names.
+- Be careful with MCP `env`: the current dashboard POST stores `env` under `openclaw.json` for MCP servers. For wallet-capable Rain tools, secrets should be stored in per-agent `docker.env` through the Secrets flow, and the Rain MCP config should reference only required env keys or non-secret policy values.
+- Add Rain-specific secrets to the dashboard as skill/API keys, not core deploy-time keys unless they become platform-wide defaults. Likely names: `RAIN_RPC_URL`, `RAIN_ALCHEMY_API_KEY`, `RAIN_PAYMASTER_POLICY_ID`, and a deliberately reviewed signing credential if any custody model is approved.
+- Add a Rain MCP preset beside GitHub, Filesystem, and Brave Search in the Tools tab once the MCP server install path is known.
+- Add Rain skills to the system skill library (`/opt/openclaw/skills` on Agent servers) or install them through the existing global skills API so the new-agent wizard can select them. Marking them as core skills is already supported through `app/api/core-skills/route.ts`.
+- Add policy and wallet capability controls as dashboard-managed agent config metadata before enabling send tools. The current generic MCP flow can add any server for owners, but it does not understand spend limits, allowed actions, market allowlists, or approval requirements.
+- Use existing audit logging as the minimum baseline (`mcp.add`, `mcp.delete`, `skill.install`, `secrets.update`), but Rain execution needs transaction-level audit events such as `rain.tx.proposed`, `rain.tx.approved`, `rain.tx.sent`, and `rain.tx.denied`.
+- Existing WorkspaceRole is currently `owner | admin`; any member-role distinction from the original plan should be mapped to AgentGlob's current workspace and platform role model before implementation.
+
+### Recommended AgentGlob V1 Scope
+
+For the first implementation, ship Rain Analyst and Rain Trader in `build-only` or `approval-required` mode only. That matches the current AgentGlob MCP/Secrets/Skills architecture while avoiding autonomous wallet execution before policy UI, custody review, and transaction audit logs exist.
+
 ## Suggested Implementation Order
 
 1. Install and test the official Rain OpenClaw skills on DevAgents.
