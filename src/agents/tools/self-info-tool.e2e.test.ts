@@ -35,7 +35,7 @@ describe("self_info tool", () => {
     callGatewayMock.mockResolvedValue(identityResult);
 
     const tool = createSelfInfoTool();
-    const result = await tool.execute("call-1", { action: "identity" });
+    await tool.execute("call-1", { action: "identity" });
 
     expect(callGatewayMock).toHaveBeenCalledOnce();
     const call = callGatewayMock.mock.calls[0]?.[0] as { method?: string };
@@ -136,8 +136,6 @@ describe("self_info tool", () => {
 
   it("throws on unknown action", async () => {
     const tool = createSelfInfoTool();
-    await expect(tool.execute("call-7", { action: "unknown" })).rejects.toThrow(
-      "Unknown action",
-    );
+    await expect(tool.execute("call-7", { action: "unknown" })).rejects.toThrow("Unknown action");
   });
 });
