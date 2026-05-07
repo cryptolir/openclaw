@@ -93,7 +93,7 @@
 
 ## Currently In Progress
 
-- None known
+- Codex owns `openclaw` branch `codex/docs-rain-sdk-agent-plan` for Rain SDK skill/MCP/wallet integration planning and Claude review handoff.
 
 ---
 
@@ -131,6 +131,7 @@
 | openclaw-dashboard | hotfix/nvidia-existing-agent-models | #62 | merged+deployed | Codex   | config save, public chat fallback        | tsc + npm build    | Monitor Jojo PM fallback behavior        | Prod revision `openclaw-dashboard-00238-4s6`; tag `v2026.5.4.1`; backfills existing configs                                |
 | openclaw-dashboard | hotfix/public-chat-default-fallback | #63 | merged+deployed | Codex   | public chat fallback                     | tsc                | Monitor stale/no-model clients           | Prod revision `openclaw-dashboard-00239-bl9`; tag `v2026.5.4.2`; default NVIDIA failures retry Claude                      |
 | openclaw           | hotfix/nvidia-compose-env           | #10 | merged          | Codex   | docker-compose.yml, .env.example         | runtime smoke      | Include in next gateway image deploy     | Runtime compose file patched on EU/US so containers receive `NVIDIA_API_KEY`                                               |
+| openclaw           | codex/docs-rain-sdk-agent-plan      | n/a | planning        | Codex   | RAIN_SDK_AGENT_HANDOVER.md, STATUS.md    | docs only          | Claude review of Rain integration plan   | Branch contains no runtime code changes; review MCP/skills/wallet capability design before implementation                  |
 | unknown            | chore/staging-deploy-gcp            | #1  | open, stale     | unknown | GCP deploy workflow                      | unknown            | Verify ownership before reuse or cleanup | Treat as active until verified                                                                                             |
 
 ---
