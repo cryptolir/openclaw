@@ -93,7 +93,7 @@
 
 ## Currently In Progress
 
-- None known
+- Codex owns `openclaw` branch `codex/feat-rain-agent-skills` for the Rain skill scaffold. Scope: `skills/rain/SKILL.md`, `STATUS.md`. This intentionally avoids dashboard wallet/RPC files while Claude owns the AgentGlob wallet integration.
 
 ---
 
@@ -131,6 +131,7 @@
 | openclaw-dashboard | hotfix/nvidia-existing-agent-models | #62 | merged+deployed | Codex   | config save, public chat fallback        | tsc + npm build    | Monitor Jojo PM fallback behavior        | Prod revision `openclaw-dashboard-00238-4s6`; tag `v2026.5.4.1`; backfills existing configs                                |
 | openclaw-dashboard | hotfix/public-chat-default-fallback | #63 | merged+deployed | Codex   | public chat fallback                     | tsc                | Monitor stale/no-model clients           | Prod revision `openclaw-dashboard-00239-bl9`; tag `v2026.5.4.2`; default NVIDIA failures retry Claude                      |
 | openclaw           | hotfix/nvidia-compose-env           | #10 | merged          | Codex   | docker-compose.yml, .env.example         | runtime smoke      | Include in next gateway image deploy     | Runtime compose file patched on EU/US so containers receive `NVIDIA_API_KEY`                                               |
+| openclaw           | codex/feat-rain-agent-skills        | TBD | in_progress     | Codex   | skills/rain/SKILL.md, STATUS.md          | pending            | Open PR for Rain skill scaffold          | Depends on AgentGlob wallet runtime/Alchemy RPC work for wallet-backed execution; no dashboard wallet files touched        |
 | unknown            | chore/staging-deploy-gcp            | #1  | open, stale     | unknown | GCP deploy workflow                      | unknown            | Verify ownership before reuse or cleanup | Treat as active until verified                                                                                             |
 
 ---
