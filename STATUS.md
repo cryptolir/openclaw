@@ -7,6 +7,20 @@
 
 ## Last Session
 
+- **Date**: 2026-05-08 (Rain runtime preview deploy)
+- **What changed**:
+  - **Dashboard PR #72** (`codex/feat-rain-runtime-v1`): documented the Rain integration plan in `RAIN_INTEGRATION_PLAN.md`, added runtime-authenticated Rain preview routes, reused the shared Alchemy/RPC helpers, added `RAIN_API_KEY` as a carried-forward core secret, and auto-installs/injects runtime access for the `rain` skill when selected or activated by the secret
+  - Rain execution remains preview-only in dashboard v1: routes build transaction requests for the wallet runtime to sign; no raw private keys or direct Rain wallet custody were added
+  - Claude was looped in on PR #72 with the remaining parallel tasks: sync/release the OpenClaw `rain` skill to agent hosts, verify runtime token access from a real agent container, and run a low-value Arbitrum preview-to-wallet-sign smoke test
+  - **Production deploy**: GitHub Actions deployed `main` to Cloud Run and pushed tag `v2026.5.8.4`
+- **Validation**:
+  - Dashboard: `npx tsc --noEmit`, `timeout 240 npm run build`, GitHub Actions run `25564607850`
+  - Runtime route: `https://app.agentglob.com/api/runtime/rain/markets` returns `401 {"ok":false,"error":"missing bearer token"}` without runtime auth, confirming the production route is live and protected
+
+---
+
+## Last Session (prev)
+
 - **Date**: 2026-05-05 (handover note)
 - **What changed**:
   - Added repo-root `HANDOVER.md` as the front-door handoff note for future Claude/Codex sessions
@@ -130,6 +144,7 @@
 | openclaw-dashboard | hotfix/nvidia-designer-chat         | #61 | merged+deployed | Codex   | public chat models, config template      | tsc + npm build    | Monitor designer/GLM-5 landing behavior  | Prod revision `openclaw-dashboard-00237-6tr`; tag `v2026.5.3.2`; default `nvidia/z-ai/glm-5.1`                             |
 | openclaw-dashboard | hotfix/nvidia-existing-agent-models | #62 | merged+deployed | Codex   | config save, public chat fallback        | tsc + npm build    | Monitor Jojo PM fallback behavior        | Prod revision `openclaw-dashboard-00238-4s6`; tag `v2026.5.4.1`; backfills existing configs                                |
 | openclaw-dashboard | hotfix/public-chat-default-fallback | #63 | merged+deployed | Codex   | public chat fallback                     | tsc                | Monitor stale/no-model clients           | Prod revision `openclaw-dashboard-00239-bl9`; tag `v2026.5.4.2`; default NVIDIA failures retry Claude                      |
+| openclaw-dashboard | codex/feat-rain-runtime-v1          | #72 | merged+deployed | Codex   | Rain runtime preview routes, deploy env  | tsc + npm build + CI | Claude: sync/release rain skill and run agent-container smoke | Prod tag `v2026.5.8.4`; runtime routes are auth-protected and reuse wallet signing path                                  |
 | openclaw           | hotfix/nvidia-compose-env           | #10 | merged          | Codex   | docker-compose.yml, .env.example         | runtime smoke      | Include in next gateway image deploy     | Runtime compose file patched on EU/US so containers receive `NVIDIA_API_KEY`                                               |
 | unknown            | chore/staging-deploy-gcp            | #1  | open, stale     | unknown | GCP deploy workflow                      | unknown            | Verify ownership before reuse or cleanup | Treat as active until verified                                                                                             |
 
