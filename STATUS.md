@@ -7,6 +7,26 @@
 
 ## Last Session
 
+- **Date**: 2026-05-09 (Rain skill review + wallet runtime end-to-end debug)
+- **What changed**:
+  - **Claude review of `openclaw-dashboard` PR #75** (rain skill UX handoff plan) — confirmed manifest shape, confirmed `RAIN_API_KEY` stays carry-forward only, flagged SDK environment naming bug
+  - **Verified Rain SDK env names** against installed `@buidlrrr/rain-sdk@2.0.0`: `"development" | "stage" | "production"`. PR #19 documented `staging` (incorrect). Patched in **openclaw PR #22** (targets `codex/feat-rain-agent-skills`)
+  - **Wallet skill end-to-end debug** (raingame agent on US `5.161.84.219`): three layers were broken:
+    1. `/opt/openclaw/docker-compose.yml` did not forward `AGENTGLOB_RUNTIME_URL`/`AGENTGLOB_RUNTIME_TOKEN` into the container — wallet skill required env check failed silently, skill stripped from available_skills XML block. Fixed on prod servers + **openclaw PR #23**
+    2. Dashboard deploy installed selected skills only inside `if (shouldBootstrapWorkspace)` — existing agents never picked up newly selected skills on redeploy. Fixed in **openclaw-dashboard PR #76**
+    3. NVIDIA GLM-5.1 (raingame primary model) hallucinated `wallet not active` from the SKILL.md error example without making the actual call. Added `## Execution discipline (MANDATORY)` to the wallet SKILL.md on prod and to PR #22 rain SKILL.md
+  - **Smoke test from inside raingame container**: all four chains return funded balances (`ethereum 0.00961`, `arbitrum 0.00498`, `polygon 0`, `base 0.00179`)
+  - **Production patches applied** to both prod servers (compose file + skill files); these revert when openclaw PR #23 + a fresh image deploy land
+- **Validation**:
+  - `npx tsc --noEmit` clean on PR #76
+  - `pnpm exec oxfmt --check` clean on PR #22 SKILL.md
+  - End-to-end runtime call from inside `docker exec raingame-openclaw-gateway-1` returns valid JSON for all four chains
+- **Sync state**: do not edit Claude active wallet branch (`feat/hot-wallet-skill`); the wallet skill execution-discipline section needs to be ported there separately
+
+---
+
+## Last Session (prev)
+
 - **Date**: 2026-05-05 (handover note)
 - **What changed**:
   - Added repo-root `HANDOVER.md` as the front-door handoff note for future Claude/Codex sessions
@@ -16,7 +36,7 @@
 
 ---
 
-## Last Session (prev)
+## Last Session (prev2)
 
 - **Date**: 2026-05-04 (Jojo PM NVIDIA fallback hotfix)
 - **What changed**:
@@ -93,7 +113,11 @@
 
 ## Currently In Progress
 
-- None known
+- **Rain skill UX handoff** — Codex owns dashboard planning (`codex/plan-rain-skill-ux` / PR #75). Claude completed review pass; Codex next step is dashboard catalog/manifest implementation (`codex/feat-platform-skill-catalog`).
+- **Rain agent skill** — Codex owns `openclaw codex/feat-rain-agent-skills` / PR #19. Claude patch PR #22 (staging→stage + runtime routes section + execution discipline) is open against PR #19 branch and should land before #19 merges.
+- **Runtime env passthrough** — Claude opened `openclaw fix/compose-runtime-env-passthrough` / PR #23. Once merged + image rebuilt + redeployed, the manual prod-server compose patches can be reverted.
+- **Skill install on redeploy** — Claude opened `openclaw-dashboard fix/skill-install-on-redeploy` / PR #76. Hoists the skill `cp -R` loop out of the bootstrap conditional so existing agents pick up newly selected skills on redeploy.
+- **Wallet skill** — Claude continues to own `openclaw feat/hot-wallet-skill`. The execution-discipline patch applied to prod still needs to be pulled into that branch before merge.
 
 ---
 
@@ -111,6 +135,7 @@
 - CI: arm64 Docker builds now use QEMU emulation (slower than native) — if build times are a problem, consider GitHub's `ubuntu-24.04-arm` runner (requires Team/Enterprise plan)
 - Coordination: confirm ownership before touching any branch or file area the other agent is actively editing
 - Branch hygiene: `chore/staging-deploy-gcp` is still listed as open and stale; verify before reuse or cleanup
+- **Tool-use compliance on weaker models**: NVIDIA GLM-5.1 (default primary on new agents) hallucinates HTTP responses for runtime-backed skills, parroting SKILL.md error examples without making the call. Mitigations: explicit `## Execution discipline` section in each runtime skill (in PR #22 for rain; applied to wallet on prod). If the hallucination persists after that, fall back to Venice (Claude Opus 4.6, already in default fallbacks) or pin to it as primary on agents that depend on the wallet/Rain runtime.
 
 ---
 
@@ -131,6 +156,12 @@
 | openclaw-dashboard | hotfix/nvidia-existing-agent-models | #62 | merged+deployed | Codex   | config save, public chat fallback        | tsc + npm build    | Monitor Jojo PM fallback behavior        | Prod revision `openclaw-dashboard-00238-4s6`; tag `v2026.5.4.1`; backfills existing configs                                |
 | openclaw-dashboard | hotfix/public-chat-default-fallback | #63 | merged+deployed | Codex   | public chat fallback                     | tsc                | Monitor stale/no-model clients           | Prod revision `openclaw-dashboard-00239-bl9`; tag `v2026.5.4.2`; default NVIDIA failures retry Claude                      |
 | openclaw           | hotfix/nvidia-compose-env           | #10 | merged          | Codex   | docker-compose.yml, .env.example         | runtime smoke      | Include in next gateway image deploy     | Runtime compose file patched on EU/US so containers receive `NVIDIA_API_KEY`                                               |
+| openclaw-dashboard | feat/rain-runtime                   | #72 | merged+deployed | Codex   | runtime/rain routes, lib/rpc.ts          | tsc + npm build    | None                                     | Production tag `v2026.5.8.4`; routes return 401 without bearer; deployed                                                   |
+| openclaw-dashboard | codex/plan-rain-skill-ux            | #75 | open            | Codex   | RAIN_INTEGRATION_PLAN.md, handover doc   | tsc + npm build    | Codex implements platform skill catalog  | Claude review complete; SDK env naming bug confirmed and fixed via PR #22                                                  |
+| openclaw           | codex/feat-rain-agent-skills        | #19 | open            | Codex   | skills/rain/SKILL.md, STATUS.md          | tests + format     | Land PR #22, then merge #19              | Awaiting PR #22 merge first (env naming + runtime routes + execution discipline)                                           |
+| openclaw           | fix/rain-skill-staging-env          | #22 | open            | Claude  | skills/rain/SKILL.md                     | oxfmt --check      | Merge into PR #19 branch                 | Fixes staging->stage, adds AgentGlob Runtime Routes section, adds execution discipline section                             |
+| openclaw           | fix/compose-runtime-env-passthrough | #23 | open            | Claude  | docker-compose.yml                       | smoke from prod    | Merge then rebuild+deploy openclaw image | Forwards AGENTGLOB_RUNTIME_URL/TOKEN; without this, requires.env check fails and runtime skills are silently stripped      |
+| openclaw-dashboard | fix/skill-install-on-redeploy       | #76 | open            | Claude  | app/api/agents/deploy/route.ts           | npx tsc --noEmit   | Merge + monitor existing-agent redeploys | Hoists skill cp -R loop out of shouldBootstrapWorkspace; idempotent rm -rf + cp -R works on first deploy and refresh       |
 | unknown            | chore/staging-deploy-gcp            | #1  | open, stale     | unknown | GCP deploy workflow                      | unknown            | Verify ownership before reuse or cleanup | Treat as active until verified                                                                                             |
 
 ---
