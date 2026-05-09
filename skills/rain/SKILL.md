@@ -66,6 +66,28 @@ All routes require `Authorization: Bearer $AGENTGLOB_RUNTIME_TOKEN`. Buy and cla
 
 This is the current production path. MCP tool equivalents are planned but not yet available.
 
+## Execution discipline (MANDATORY)
+
+**You MUST actually execute the HTTP request before reporting any result.**
+
+Do NOT:
+
+- guess what the API will return
+- assume Rain markets are unavailable without checking
+- copy the example responses below as if they happened
+- pattern-match the user word "rain" or "market" to a hardcoded answer
+
+DO:
+
+- run the curl/fetch via your shell or http tool
+- read the actual JSON response that came back
+- report what the runtime actually returned
+- only report errors the runtime literally returned in JSON
+
+If you cannot make the network call (no shell tool, no network, etc.), say
+that explicitly — do not invent a response that pretends you succeeded or
+failed.
+
 ## Market Analysis Workflow
 
 For read-only Rain analysis:
