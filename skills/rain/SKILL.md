@@ -16,7 +16,7 @@ Rain execution must use AgentGlob's runtime wallet layer. Do not ask users for p
 - Rain protocol execution settles on Arbitrum One.
 - The stateless `Rain` class reads data and builds unsigned `RawTransaction` objects with `to`, `data`, and optional `value` fields.
 - `RainAA` is the stateful account-abstraction path and uses Alchemy smart accounts for sponsored execution.
-- Rain environments are `development`, `staging`, and `production`; each maps to Rain-managed API endpoints and factory addresses.
+- Rain environments are `development`, `stage`, and `production`; each maps to Rain-managed API endpoints and factory addresses.
 - The standard base token is Arbitrum USDT at `0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9` with 6 decimals.
 
 Use these facts as constraints, but verify exact method names from installed package typings or live MCP tools before writing runtime code.
@@ -50,6 +50,43 @@ Expected future Rain MCP tool groups:
 - Execution handoff: `prepare_execution`, `simulate_tx`, `request_wallet_approval`.
 
 Use exact tool names from the live tool list; do not invent calls because these names are expected shapes, not guaranteed availability.
+
+## AgentGlob Runtime Routes
+
+If Rain MCP tools are not available but `AGENTGLOB_RUNTIME_URL` and `AGENTGLOB_RUNTIME_TOKEN` are set in the agent environment, call the deployed dashboard runtime routes directly:
+
+```
+GET  $AGENTGLOB_RUNTIME_URL/api/runtime/rain/markets
+GET  $AGENTGLOB_RUNTIME_URL/api/runtime/rain/markets/:marketId
+POST $AGENTGLOB_RUNTIME_URL/api/runtime/rain/build-buy
+POST $AGENTGLOB_RUNTIME_URL/api/runtime/rain/build-claim
+```
+
+All routes require `Authorization: Bearer $AGENTGLOB_RUNTIME_TOKEN`. Buy and claim routes return a `walletRequest` payload intended for the AgentGlob wallet runtime signer.
+
+This is the current production path. MCP tool equivalents are planned but not yet available.
+
+## Execution discipline (MANDATORY)
+
+**You MUST actually execute the HTTP request before reporting any result.**
+
+Do NOT:
+
+- guess what the API will return
+- assume Rain markets are unavailable without checking
+- copy the example responses below as if they happened
+- pattern-match the user word "rain" or "market" to a hardcoded answer
+
+DO:
+
+- run the curl/fetch via your shell or http tool
+- read the actual JSON response that came back
+- report what the runtime actually returned
+- only report errors the runtime literally returned in JSON
+
+If you cannot make the network call (no shell tool, no network, etc.), say
+that explicitly — do not invent a response that pretends you succeeded or
+failed.
 
 ## Market Analysis Workflow
 
