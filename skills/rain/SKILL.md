@@ -43,7 +43,15 @@ Success response:
 {
   "ok": true,
   "chain": "arbitrum",
-  "markets": [ { "id": "...", "question": "...", "status": "Live", ... } ]
+  "markets": [
+    {
+      "id": "...",
+      "title": "...",
+      "totalVolume": "...",
+      "status": "Live",
+      "contractAddress": "0x..."
+    }
+  ]
 }
 ```
 
@@ -83,7 +91,7 @@ Content-Type: application/json
 
 `marketContractAddress` — EVM address of the Rain market contract (from the market listing).
 `selectedOption` — zero-based option index as a number (0, 1, 2, ...).
-`buyAmountInWei` — purchase amount in the market base token (Arbitrum USDT, 6 decimals) as a string-encoded integer. Example: "1000000" = 1 USDT.
+`buyAmountInWei` — purchase amount in the market's base token, expressed in its smallest unit, as a string-encoded integer. **Different markets use different base tokens.** Always read `details.baseToken` (the ERC-20 contract address) and `details.baseTokenDecimals` from the market detail response before computing this — do not assume USDT or 6 decimals. Examples: for a market with `baseTokenDecimals: "6"`, `"1000000"` = 1.0 base-token unit; for an 18-decimal token, the same human amount would be `"1000000000000000000"`.
 
 Success response:
 
@@ -158,7 +166,7 @@ Default: stay in `build-only`. Never escalate to signing or broadcasting without
 
 ## Buy workflow
 
-1. Confirm: exact market contract address, option index, amount in USDT.
+1. Confirm: exact market contract address, option index, and amount in the market's base token. Look up the base token and its decimals from `details.baseToken` / `details.baseTokenDecimals` first — markets are not all USDT.
 2. Call `POST .../build-buy` and show the full preview including `approvalMayBeRequired`.
 3. If `approvalMayBeRequired` is true, warn the user that a token approval step may precede execution.
 4. If the user approves, pass `walletRequest` to the wallet sign-tx route and report the transaction hash.
@@ -196,7 +204,7 @@ Chain:    arbitrum
 Action:   buy_option | claim
 Market:   <question or contract address>
 Option:   <index and label if known>
-Amount:   <USDT equivalent>
+Amount:   <human amount> <base token symbol>  (e.g. "1.0 USDT", "0.5 WETH" — symbol resolved from details.baseToken)
 Approval: may be required before this transaction executes
 ---
 Approve and sign? Reply yes to proceed.
