@@ -1,9 +1,11 @@
 # Plan — Rain skill rewrite + create-market split
 
-> Status: **proposal, awaiting review** (no code changes yet)
+> Status: **v2 — Codex review incorporated, ready for implementation**
 > Author: Claude (handover-paired)
-> Reviewer: Codex
+> Reviewer: Codex (see PR #44 comment thread)
 > Target branch when implemented: `feat/rain-skill-split`
+>
+> **v2 changes:** §4.2 address-vs-id rule completed; §4.4 ownership clarified; §5.1 `requires.skills` removed (not loader-supported); §5.2 runtime prerequisite check added; §7 open questions resolved as decisions; §8.1 explicit 22-tool mapping added; §11 wallet-gate follow-up scoped out.
 
 ---
 
@@ -72,9 +74,15 @@ When to call:
 
 Address-vs-id rule (call it out explicitly):
 
-- `rain_list_markets`, `rain_get_market`, `rain_build_claim`, `rain_get_price_history` take **marketId**.
-- `rain_get_trade_history`, `rain_get_market_transactions`, `rain_get_pnl` take **marketAddress**.
-- `rain_get_market_address` and `rain_resolve_market_id` convert between them.
+Three groups, verified against `RainRuntimeClient` method signatures:
+
+- **`marketId` (subgraph/internal):** `rain_get_market`, `rain_build_claim`, `rain_get_price_history`, `rain_get_position_by_market`, `rain_get_lp_position`, `rain_get_market_address`.
+- **`marketContractAddress` (on-chain target of a tx):** `rain_build_buy`, `rain_build_sell`, `rain_build_add_liquidity`.
+- **`marketAddress` (on-chain target of an analytics query):** `rain_get_trade_history`, `rain_get_market_transactions`, `rain_get_pnl` (optional), `rain_resolve_market_id` (as input).
+
+`marketContractAddress` and `marketAddress` are the same value — the parameter name varies by tool because the build-\* tools and the analytics tools were named independently. The SKILL should treat them as one concept ("the market's on-chain address") and use whichever name the tool's schema requires.
+
+Conversion: `rain_get_market_address` (id → address) and `rain_resolve_market_id` (address → id).
 
 ### 4.3 Add a one-paragraph "Utility & diagnostics" section
 
@@ -84,9 +92,9 @@ Address-vs-id rule (call it out explicitly):
 
 ### 4.4 Remove the existing "Create-market flow" section
 
-Replace it with a one-line pointer: _"Market creation is documented in the separate `rain-create` skill. Enable that skill if the agent should be able to deploy new markets."_
+`rain_build_create_market` is **owned by the `rain-create` skill** — that's the only skill that contains its flow guidance. The `rain` skill's tool list mentions it once with the annotation _"→ owned by `rain-create` skill; do not call without that skill enabled"_, but the flow body lives only in `rain-create`. This is a cross-reference, not co-ownership — the acceptance criteria in §8 enforce exactly-one-skill ownership.
 
-Keep `rain_build_create_market` listed in the "What the Rain MCP gives you" tool list with a `→ rain-create skill` annotation, so an agent that does not have rain-create enabled still knows the tool exists but should not call it without the flow guidance.
+Replace the existing `## Create-market flow` section with a one-line pointer: _"Market creation is documented in the separate `rain-create` skill. Enable that skill if the agent should be able to deploy new markets."_
 
 ### 4.5 Update the header and version
 
@@ -108,15 +116,19 @@ metadata:
     emoji: 🆕
     requires:
       env: [AGENTGLOB_RUNTIME_URL, AGENTGLOB_RUNTIME_TOKEN]
-      skills: [rain]
 ---
 ```
 
-Note: `requires.skills` is a **proposed** convention — flag to reviewer (see §7).
+**No `requires.skills` field** — Codex confirmed the dashboard loader (`lib/config-sync.ts`, `app/api/skills/route.ts`, `app/api/agents/[agentId]/skills/route.ts`) only parses `requires.env`. Adding `requires.skills` would be silently ignored.
+
+**Implementation must verify**: the dashboard's frontmatter parser. If it expects JSON-style `"env": [...]`, the existing YAML `env: [...]` in `skills/rain/SKILL.md` may not be parsed as an env-requirement (visible in dashboard UI). Confirm during implementation; switch both files to whichever format the loader actually reads.
+
+The dependency on the `rain` skill is enforced **in the skill body** instead, not via frontmatter (see §5.2).
 
 ### 5.2 Body
 
 - Two-sentence preamble: "this skill enables the agent to deploy new Rain markets. Market creation is irreversible from the agent's side and locks the creator's seed liquidity until resolution."
+- Add a **"Prerequisite check"** opener as the very first instruction: _"Before invoking `rain_build_create_market`, verify that the `rain_\*`read tools are present in your tool list. If they are not, refuse: market creation requires the`rain`skill to be enabled for prerequisite reads. Tell the user to add the`rain`skill from the dashboard's Tools tab first."_ This is the runtime substitute for the unsupported`requires.skills` frontmatter.
 - Move the existing `## Create-market flow` section from `skills/rain/SKILL.md` verbatim.
 - Add **"When NOT to use"** subsection:
   - User has not named a clear, verifiable resolution data source
@@ -135,20 +147,50 @@ Note: `requires.skills` is a **proposed** convention — flag to reviewer (see �
 
 No code, no tests, no config.
 
-## 7. Open questions for reviewer
+## 7. Decisions (resolved by Codex review)
 
-1. **`requires.skills` convention** — does the dashboard's skill loader honour skill-to-skill dependencies, or only `requires.env`? If the dependency is not enforced, the `rain-create` skill needs a runtime check ("if rain MCP is not in the tool list, tell user to enable it first") instead.
-2. **Should `rain_build_create_market` be moved out of the `rain` MCP server** into a separate `rain-create` MCP server? Current plan keeps it in the existing server (simpler, no migration). The downside is that the tool is callable even when only the `rain` skill is enabled. The skill text mitigates this ("see rain-create skill") but does not prevent it.
-3. **Diagnostics surfacing** — should `rain_get_health` be called proactively before any build\_\* call, as a pre-flight? Or stay reactive (only when something fails)? Current plan: reactive. Confirm.
-4. **Phase tag** — `RAIN_CAPABILITY_PHASE` in `tools.ts` says `"V2 Phase B"`. Should this bump when the skills split lands? My read: no — the tool surface didn't change, only the prompt guidance. Confirm.
+1. **`requires.skills`** — **NOT supported** by the dashboard loader. The plan uses a runtime/tool-list check inside `rain-create`'s body instead (see §5.2 "Prerequisite check").
+2. **MCP server split** — `rain_build_create_market` **stays in the existing `rain` MCP server**. No tool migration, no new MCP wiring. The prompt-level guidance moves to `rain-create`, but the tool itself remains callable from any agent with the `rain` MCP attached. **Skill text is advisory and does not enforce gating** — see §11 for the wallet-level runtime gate this implies.
+3. **`rain_get_health` pre-flight** — **reactive only**. Do not call before every `build_*`. Latency cost is not justified, and a health check passing does not guarantee the next build succeeds.
+4. **`RAIN_CAPABILITY_PHASE`** — **do not bump**. The MCP tool surface and capability contract are unchanged. Bump only when the tool list changes.
 
 ## 8. Acceptance criteria
 
-- [ ] Every tool name in `RAIN_TOOLS` (from `src/mcp/rain/tools.ts`) appears in exactly one of `skills/rain/SKILL.md` or `skills/rain-create/SKILL.md`.
-- [ ] `skills/rain/SKILL.md` and `skills/rain-create/SKILL.md` both have valid frontmatter.
+- [ ] Every tool name in `RAIN_TOOLS` (from `src/mcp/rain/tools.ts`) is the **flow-owner** of exactly one of `skills/rain/SKILL.md` or `skills/rain-create/SKILL.md` (see §8.1 mapping).
+- [ ] `skills/rain/SKILL.md` and `skills/rain-create/SKILL.md` both have valid frontmatter that the dashboard loader actually parses (verify by checking the loader's parser format — JSON vs YAML).
+- [ ] `rain-create` body opens with the prerequisite check from §5.2 (runtime substitute for `requires.skills`).
 - [ ] No code changes outside `skills/` and `docs/`.
 - [ ] No regressions in `rain_get_capabilities` output (still lists all 22 tools).
-- [ ] PR description includes a diff of "tool → skill" mapping so reviewers can see coverage at a glance.
+- [ ] PR description includes the §8.1 mapping so reviewers can audit coverage at a glance.
+
+### 8.1 Tool → skill ownership mapping (load-bearing)
+
+| Tool                           | Flow-owning skill | Notes                                              |
+| ------------------------------ | ----------------- | -------------------------------------------------- |
+| `rain_list_markets`            | `rain`            | Discovery                                          |
+| `rain_get_market`              | `rain`            | Discovery                                          |
+| `rain_build_buy`               | `rain`            | Trading                                            |
+| `rain_build_sell`              | `rain`            | Trading                                            |
+| `rain_build_claim`             | `rain`            | Trading                                            |
+| `rain_build_add_liquidity`     | `rain`            | Liquidity                                          |
+| `rain_get_price_history`       | `rain`            | Analytics                                          |
+| `rain_get_capabilities`        | `rain`            | Introspection                                      |
+| `rain_get_positions`           | `rain`            | Portfolio (§4.1)                                   |
+| `rain_get_position_by_market`  | `rain`            | Portfolio (§4.1)                                   |
+| `rain_get_lp_position`         | `rain`            | Portfolio (§4.1)                                   |
+| `rain_get_portfolio_value`     | `rain`            | Portfolio (§4.1)                                   |
+| `rain_get_pnl`                 | `rain`            | Portfolio (§4.1)                                   |
+| `rain_get_trade_history`       | `rain`            | Trade history (§4.2)                               |
+| `rain_get_transactions`        | `rain`            | Trade history (§4.2)                               |
+| `rain_get_market_transactions` | `rain`            | Trade history (§4.2)                               |
+| `rain_get_transaction_details` | `rain`            | Trade history (§4.2)                               |
+| `rain_get_market_address`      | `rain`            | Utility (§4.3)                                     |
+| `rain_resolve_market_id`       | `rain`            | Utility (§4.3)                                     |
+| `rain_get_config`              | `rain`            | Diagnostics (§4.3)                                 |
+| `rain_get_health`              | `rain`            | Diagnostics (§4.3)                                 |
+| `rain_build_create_market`     | **`rain-create`** | Cross-referenced in `rain`, owned by `rain-create` |
+
+**Total: 21 owned by `rain`, 1 owned by `rain-create`, 22 = `RAIN_TOOLS.length`.**
 
 ## 9. Implementation order (when approved)
 
@@ -162,6 +204,17 @@ No code, no tests, no config.
 ## 10. Out of scope / follow-ups
 
 - Skills marketplace UI in the dashboard
-- Skill-to-skill dependency enforcement (the `requires.skills` field if not yet supported)
+- Skill-to-skill dependency enforcement in the dashboard loader (`requires.skills`)
 - Splitting `rain_build_create_market` into its own MCP server
 - Adding price-quote / slippage tools (still on the Phase B roadmap, but separate ticket)
+
+## 11. Follow-up — wallet-level runtime gate for `rain_build_create_market`
+
+Codex's risk-profile note (correct): the skill split is **advisory, not enforcing**. Because `rain_build_create_market` stays in the shared `rain` MCP server, any agent with the `rain` MCP attached can call it, regardless of whether the `rain-create` skill is enabled. Skill text shapes LLM behaviour but does not block tool invocation.
+
+For a real gate, the **wallet sign-tx flow on the dashboard side** should refuse to sign a payload whose target is the Rain factory's `createMarket` selector unless one of:
+
+- the agent has the `rain-create` skill enabled (read from agent config), **OR**
+- a per-agent capability allowlist contains `rain.create-market`.
+
+This is a follow-up ticket, **not part of this plan**. The plan ships the skill split now (low risk, prompt-only) and the runtime gate lands as a separate `feat/wallet-create-market-gate` PR. Until that ships, the recommendation to operators is: do not enable the `rain` MCP for untrusted agents.
