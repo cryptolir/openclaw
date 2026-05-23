@@ -128,7 +128,12 @@ The dependency on the `rain` skill is enforced **in the skill body** instead, no
 ### 5.2 Body
 
 - Two-sentence preamble: "this skill enables the agent to deploy new Rain markets. Market creation is irreversible from the agent's side and locks the creator's seed liquidity until resolution."
-- Add a **"Prerequisite check"** opener as the very first instruction: _"Before invoking `rain_build_create_market`, verify that the `rain_\*`read tools are present in your tool list. If they are not, refuse: market creation requires the`rain`skill to be enabled for prerequisite reads. Tell the user to add the`rain`skill from the dashboard's Tools tab first."_ This is the runtime substitute for the unsupported`requires.skills` frontmatter.
+- Add a **"Prerequisite check"** opener as the very first instruction (use plain quotes, not italics, to avoid the underscore-in-backtick spacing bug):
+
+  > Before invoking `rain_build_create_market`, verify that the `rain_*` read tools are present in your tool list. If they are not, refuse: market creation requires the `rain` skill to be enabled for prerequisite reads. Tell the user to add the `rain` skill from the dashboard's Tools tab first.
+
+  This is the runtime substitute for the unsupported `requires.skills` frontmatter.
+
 - Move the existing `## Create-market flow` section from `skills/rain/SKILL.md` verbatim.
 - Add **"When NOT to use"** subsection:
   - User has not named a clear, verifiable resolution data source
