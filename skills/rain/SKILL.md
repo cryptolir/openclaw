@@ -1,11 +1,15 @@
 ---
 name: rain
 description: Prompt-level guidance for the Rain prediction-market integration on Arbitrum. Covers market discovery, trading (buy/sell/claim), liquidity provision, portfolio + analytics reads, trade history, and runtime diagnostics. The actual capability surface is the `rain` MCP server (typed tools); this skill adds safety rules, preview discipline, market-state awareness, and address-vs-id conventions. Market creation lives in the separate opt-in `rain-create` skill.
+homepage: https://app.agentglob.com
 metadata:
-  openclaw:
-    emoji: 🌧️
-    requires:
-      env: [AGENTGLOB_RUNTIME_URL, AGENTGLOB_RUNTIME_TOKEN]
+  {
+    "openclaw":
+      {
+        "emoji": "🌧️",
+        "requires": { "env": ["AGENTGLOB_RUNTIME_URL", "AGENTGLOB_RUNTIME_TOKEN"] },
+      },
+  }
 ---
 
 # Rain skill

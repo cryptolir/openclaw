@@ -1,11 +1,15 @@
 ---
 name: rain-create
 description: Prompt-level guidance for creating new Rain prediction markets on Arbitrum. Opt-in skill — high-stakes, irreversible, gas-spending. Pair with the `rain` skill (required for reading market state and base-token details).
+homepage: https://app.agentglob.com
 metadata:
-  openclaw:
-    emoji: 🆕
-    requires:
-      env: [AGENTGLOB_RUNTIME_URL, AGENTGLOB_RUNTIME_TOKEN]
+  {
+    "openclaw":
+      {
+        "emoji": "🆕",
+        "requires": { "env": ["AGENTGLOB_RUNTIME_URL", "AGENTGLOB_RUNTIME_TOKEN"] },
+      },
+  }
 ---
 
 # Rain create-market skill
