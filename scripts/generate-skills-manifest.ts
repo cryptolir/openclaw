@@ -13,8 +13,10 @@
  * contentHash = sha256 of the full normalized SKILL.md (including frontmatter).
  */
 
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse as parseYaml } from "yaml";
@@ -25,6 +27,18 @@ const SKILLS_DIR = path.join(REPO_ROOT, "skills");
 const MANIFEST_PATH = path.join(SKILLS_DIR, "manifest.json");
 
 const CHECK_MODE = process.argv.includes("--check");
+
+/**
+ * Skill directories that intentionally do NOT participate in the canonical
+ * registry. They may exist as documentation-only skills (no frontmatter at
+ * all) or carry frontmatter without the `metadata.openclaw` block. They are
+ * skipped silently.
+ *
+ * Any OTHER directory that fails to parse cleanly is treated as a hard error
+ * in generate / check modes, so frontmatter regressions surface in CI rather
+ * than silently dropping a skill from the manifest.
+ */
+const NON_CANONICAL_ALLOWLIST = new Set<string>(["canvas", "healthcheck", "skill-creator"]);
 
 // ── types ─────────────────────────────────────────────────────────────────────
 
@@ -176,6 +190,22 @@ function stableJson(entries: ManifestEntry[]): string {
   return JSON.stringify(stable, null, 2) + "\n";
 }
 
+/**
+ * Run `oxfmt` on a file in-place. Returns true on success, false otherwise.
+ * Used after writing manifest.json (and after writing a temp file in --check)
+ * so the committed manifest matches what `pnpm format:check` expects.
+ */
+function oxfmtInPlace(filePath: string): { ok: boolean; stderr?: string } {
+  const result = spawnSync("pnpm", ["exec", "oxfmt", filePath], {
+    cwd: REPO_ROOT,
+    encoding: "utf8",
+  });
+  if (result.status !== 0) {
+    return { ok: false, stderr: result.stderr || result.stdout || "(no output)" };
+  }
+  return { ok: true };
+}
+
 // ── main ──────────────────────────────────────────────────────────────────────
 
 function main() {
@@ -185,7 +215,8 @@ function main() {
   }
 
   const entries: ManifestEntry[] = [];
-  const skipped: string[] = [];
+  const skippedAllowlisted: string[] = [];
+  const errors: string[] = [];
 
   const skillDirs = readdirSync(SKILLS_DIR, { withFileTypes: true })
     .filter((d) => d.isDirectory())
@@ -195,7 +226,7 @@ function main() {
   for (const dir of skillDirs) {
     const skillFile = path.join(SKILLS_DIR, dir, "SKILL.md");
     if (!existsSync(skillFile)) {
-      skipped.push(`${dir}: no SKILL.md`);
+      // No SKILL.md at all is always allowed — could be an asset-only directory.
       continue;
     }
 
@@ -204,7 +235,23 @@ function main() {
     const fm = parseFrontmatter(normalized, dir);
 
     if (!fm.ok) {
-      skipped.push(`${dir}: ${fm.reason}`);
+      if (NON_CANONICAL_ALLOWLIST.has(dir)) {
+        skippedAllowlisted.push(`${dir}: ${fm.reason}`);
+        continue;
+      }
+      errors.push(`${dir}: ${fm.reason}`);
+      continue;
+    }
+
+    // Enforce frontmatter.name === directory name. The generator and the
+    // dashboard both key off the directory name; a mismatch would mask a
+    // rename / typo and silently drift identity vs. provenance.
+    if (fm.name !== dir) {
+      if (NON_CANONICAL_ALLOWLIST.has(dir)) {
+        skippedAllowlisted.push(`${dir}: frontmatter.name='${fm.name}' (allowlisted)`);
+        continue;
+      }
+      errors.push(`${dir}: frontmatter.name='${fm.name}' does not match directory name`);
       continue;
     }
 
@@ -220,34 +267,67 @@ function main() {
     entries.push(entry);
   }
 
-  const generated = stableJson(entries);
+  if (errors.length > 0) {
+    console.error("ERROR: canonical-skill frontmatter problems:");
+    for (const e of errors) {
+      console.error(`  - ${e}`);
+    }
+    console.error(
+      "\nFix the SKILL.md files above, or add the directory to NON_CANONICAL_ALLOWLIST in this script if it should not be canonical.",
+    );
+    process.exit(1);
+  }
 
-  if (skipped.length > 0) {
-    console.warn("Skipped skills (no canonical metadata):");
-    for (const s of skipped) {
-      console.warn(`  - ${s}`);
+  if (skippedAllowlisted.length > 0) {
+    console.log("Skipped (non-canonical allowlist):");
+    for (const s of skippedAllowlisted) {
+      console.log(`  - ${s}`);
     }
   }
 
+  const generated = stableJson(entries);
+
   if (CHECK_MODE) {
-    // Fail if manifest doesn't match what would be generated.
     if (!existsSync(MANIFEST_PATH)) {
       console.error("skills/manifest.json does not exist. Run `pnpm skills:manifest` to generate.");
       process.exit(1);
     }
-    const committed = readFileSync(MANIFEST_PATH, "utf8");
-    if (committed !== generated) {
-      console.error(
-        "skills/manifest.json is out of sync with the SKILL.md files.\n" +
-          "Run `pnpm skills:manifest` to regenerate, then commit the result.",
-      );
-      process.exit(1);
+    // Write the generator's raw output to a tempfile, oxfmt it, then compare
+    // against the committed manifest. This catches both content drift and
+    // formatter drift in one shot — the committed manifest must be exactly
+    // what `pnpm skills:manifest` (which includes the oxfmt post-step) would
+    // produce.
+    const tmpDir = mkdtempSync(path.join(tmpdir(), "skills-manifest-check-"));
+    const tmpPath = path.join(tmpDir, "manifest.json");
+    try {
+      writeFileSync(tmpPath, generated, "utf8");
+      const fmt = oxfmtInPlace(tmpPath);
+      if (!fmt.ok) {
+        console.error(`oxfmt failed on temp manifest: ${fmt.stderr ?? ""}`);
+        process.exit(1);
+      }
+      const formatted = readFileSync(tmpPath, "utf8");
+      const committed = readFileSync(MANIFEST_PATH, "utf8");
+      if (committed !== formatted) {
+        console.error(
+          "skills/manifest.json is out of sync with the SKILL.md files.\n" +
+            "Run `pnpm skills:manifest` to regenerate, then commit the result.",
+        );
+        process.exit(1);
+      }
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true });
     }
     console.log(`skills/manifest.json is up to date (${entries.length} skills).`);
     return;
   }
 
   writeFileSync(MANIFEST_PATH, generated, "utf8");
+  const fmt = oxfmtInPlace(MANIFEST_PATH);
+  if (!fmt.ok) {
+    console.error(`oxfmt failed on skills/manifest.json: ${fmt.stderr ?? ""}`);
+    process.exit(1);
+  }
   console.log(`Wrote skills/manifest.json with ${entries.length} skills.`);
 }
 

@@ -318,17 +318,28 @@ describe("handleSkillsBundledRequest — GET /skills/bundled/:name", () => {
     expect(handled).toBe(false);
   });
 
-  test("(e) returns 404 for skill name with slash", async () => {
-    const cap = makeRes();
-    const handled = await handleSkillsBundledRequest(
-      makeReq("GET", "/skills/bundled/foo/bar"),
-      cap.res,
-      { auth: makeAuth() },
-    );
+  test("(e) returns 404 for extra path segments after the skill name", async () => {
+    // /skills/bundled/:name takes exactly one path segment. Anything with
+    // extra segments must 404 even when the leading segment names a real
+    // canonical skill — otherwise a client bug (duplicated path, trailing
+    // slash, etc.) would silently succeed against the wrong route.
+    const cases = [
+      "/skills/bundled/rain/", // trailing slash on real skill
+      "/skills/bundled/rain/anything", // extra segment on real skill
+      "/skills/bundled/rain/a/b/c", // deep extra segments on real skill
+      "/skills/bundled/foo/bar", // extras with non-existent leading name
+    ];
 
-    // If 'foo' isn't in the manifest, it's a 404. Otherwise it returns the 'foo' skill.
-    expect(handled).toBe(true);
-    expect([200, 404]).toContain(cap.statusCode);
+    for (const url of cases) {
+      const cap = makeRes();
+      const handled = await handleSkillsBundledRequest(makeReq("GET", url), cap.res, {
+        auth: makeAuth(),
+      });
+      expect(handled).toBe(true);
+      expect(cap.statusCode).toBe(404);
+      const body = JSON.parse(cap.body) as { error: { type: string } };
+      expect(body.error.type).toBe("not_found");
+    }
   });
 });
 

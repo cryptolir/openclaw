@@ -181,10 +181,17 @@ export async function handleSkillsBundledRequest(
     return true;
   }
 
-  // /skills/bundled/:name — return SKILL.md body
+  // /skills/bundled/:name — return SKILL.md body.
+  // Contract is exactly one safe path segment after the prefix. Extra
+  // segments (including a trailing slash) are rejected as 404 rather than
+  // matched against the leading segment — otherwise /skills/bundled/rain/foo
+  // would serve `rain`'s body, masking client bugs.
   const subPath = pathname.slice(`${BUNDLED_PREFIX}/`.length);
-  const nameParts = subPath.split("/");
-  const skillName = nameParts[0];
+  if (subPath.includes("/")) {
+    sendJson(res, 404, { error: { message: "Skill not found", type: "not_found" } });
+    return true;
+  }
+  const skillName = subPath;
 
   if (!skillName || !isSafeSkillName(skillName)) {
     sendJson(res, 404, { error: { message: "Skill not found", type: "not_found" } });

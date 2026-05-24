@@ -6,9 +6,7 @@
     "name": "1password",
     "path": "skills/1password/SKILL.md",
     "requires": {
-      "bins": [
-        "op"
-      ]
+      "bins": ["op"]
     }
   },
   {
@@ -18,9 +16,7 @@
     "name": "apple-notes",
     "path": "skills/apple-notes/SKILL.md",
     "requires": {
-      "bins": [
-        "memo"
-      ]
+      "bins": ["memo"]
     }
   },
   {
@@ -30,9 +26,7 @@
     "name": "apple-reminders",
     "path": "skills/apple-reminders/SKILL.md",
     "requires": {
-      "bins": [
-        "remindctl"
-      ]
+      "bins": ["remindctl"]
     }
   },
   {
@@ -42,9 +36,7 @@
     "name": "bear-notes",
     "path": "skills/bear-notes/SKILL.md",
     "requires": {
-      "bins": [
-        "grizzly"
-      ]
+      "bins": ["grizzly"]
     }
   },
   {
@@ -54,9 +46,7 @@
     "name": "blogwatcher",
     "path": "skills/blogwatcher/SKILL.md",
     "requires": {
-      "bins": [
-        "blogwatcher"
-      ]
+      "bins": ["blogwatcher"]
     }
   },
   {
@@ -66,9 +56,7 @@
     "name": "blucli",
     "path": "skills/blucli/SKILL.md",
     "requires": {
-      "bins": [
-        "blu"
-      ]
+      "bins": ["blu"]
     }
   },
   {
@@ -86,9 +74,7 @@
     "name": "camsnap",
     "path": "skills/camsnap/SKILL.md",
     "requires": {
-      "bins": [
-        "camsnap"
-      ]
+      "bins": ["camsnap"]
     }
   },
   {
@@ -98,9 +84,7 @@
     "name": "clawhub",
     "path": "skills/clawhub/SKILL.md",
     "requires": {
-      "bins": [
-        "clawhub"
-      ]
+      "bins": ["clawhub"]
     }
   },
   {
@@ -126,9 +110,7 @@
     "name": "eightctl",
     "path": "skills/eightctl/SKILL.md",
     "requires": {
-      "bins": [
-        "eightctl"
-      ]
+      "bins": ["eightctl"]
     }
   },
   {
@@ -138,9 +120,7 @@
     "name": "food-order",
     "path": "skills/food-order/SKILL.md",
     "requires": {
-      "bins": [
-        "ordercli"
-      ]
+      "bins": ["ordercli"]
     }
   },
   {
@@ -150,9 +130,7 @@
     "name": "gemini",
     "path": "skills/gemini/SKILL.md",
     "requires": {
-      "bins": [
-        "gemini"
-      ]
+      "bins": ["gemini"]
     }
   },
   {
@@ -162,11 +140,7 @@
     "name": "gh-issues",
     "path": "skills/gh-issues/SKILL.md",
     "requires": {
-      "bins": [
-        "curl",
-        "git",
-        "gh"
-      ]
+      "bins": ["curl", "git", "gh"]
     }
   },
   {
@@ -176,9 +150,7 @@
     "name": "gifgrep",
     "path": "skills/gifgrep/SKILL.md",
     "requires": {
-      "bins": [
-        "gifgrep"
-      ]
+      "bins": ["gifgrep"]
     }
   },
   {
@@ -188,9 +160,7 @@
     "name": "github",
     "path": "skills/github/SKILL.md",
     "requires": {
-      "bins": [
-        "gh"
-      ]
+      "bins": ["gh"]
     }
   },
   {
@@ -200,9 +170,7 @@
     "name": "gog",
     "path": "skills/gog/SKILL.md",
     "requires": {
-      "bins": [
-        "gog"
-      ]
+      "bins": ["gog"]
     }
   },
   {
@@ -212,12 +180,8 @@
     "name": "goplaces",
     "path": "skills/goplaces/SKILL.md",
     "requires": {
-      "bins": [
-        "goplaces"
-      ],
-      "env": [
-        "GOOGLE_PLACES_API_KEY"
-      ]
+      "bins": ["goplaces"],
+      "env": ["GOOGLE_PLACES_API_KEY"]
     }
   },
   {
@@ -227,9 +191,7 @@
     "name": "himalaya",
     "path": "skills/himalaya/SKILL.md",
     "requires": {
-      "bins": [
-        "himalaya"
-      ]
+      "bins": ["himalaya"]
     }
   },
   {
@@ -239,9 +201,7 @@
     "name": "imsg",
     "path": "skills/imsg/SKILL.md",
     "requires": {
-      "bins": [
-        "imsg"
-      ]
+      "bins": ["imsg"]
     }
   },
   {
@@ -251,9 +211,7 @@
     "name": "mcporter",
     "path": "skills/mcporter/SKILL.md",
     "requires": {
-      "bins": [
-        "mcporter"
-      ]
+      "bins": ["mcporter"]
     }
   },
   {
@@ -263,9 +221,7 @@
     "name": "model-usage",
     "path": "skills/model-usage/SKILL.md",
     "requires": {
-      "bins": [
-        "codexbar"
-      ]
+      "bins": ["codexbar"]
     }
   },
   {
@@ -275,12 +231,8 @@
     "name": "nano-banana-pro",
     "path": "skills/nano-banana-pro/SKILL.md",
     "requires": {
-      "bins": [
-        "uv"
-      ],
-      "env": [
-        "GEMINI_API_KEY"
-      ]
+      "bins": ["uv"],
+      "env": ["GEMINI_API_KEY"]
     }
   },
   {
@@ -290,9 +242,7 @@
     "name": "nano-pdf",
     "path": "skills/nano-pdf/SKILL.md",
     "requires": {
-      "bins": [
-        "nano-pdf"
-      ]
+      "bins": ["nano-pdf"]
     }
   },
   {
@@ -302,9 +252,7 @@
     "name": "notion",
     "path": "skills/notion/SKILL.md",
     "requires": {
-      "env": [
-        "NOTION_API_KEY"
-      ]
+      "env": ["NOTION_API_KEY"]
     }
   },
   {
@@ -314,9 +262,7 @@
     "name": "obsidian",
     "path": "skills/obsidian/SKILL.md",
     "requires": {
-      "bins": [
-        "obsidian-cli"
-      ]
+      "bins": ["obsidian-cli"]
     }
   },
   {
@@ -326,12 +272,8 @@
     "name": "openai-image-gen",
     "path": "skills/openai-image-gen/SKILL.md",
     "requires": {
-      "bins": [
-        "python3"
-      ],
-      "env": [
-        "OPENAI_API_KEY"
-      ]
+      "bins": ["python3"],
+      "env": ["OPENAI_API_KEY"]
     }
   },
   {
@@ -341,9 +283,7 @@
     "name": "openai-whisper",
     "path": "skills/openai-whisper/SKILL.md",
     "requires": {
-      "bins": [
-        "whisper"
-      ]
+      "bins": ["whisper"]
     }
   },
   {
@@ -353,12 +293,8 @@
     "name": "openai-whisper-api",
     "path": "skills/openai-whisper-api/SKILL.md",
     "requires": {
-      "bins": [
-        "curl"
-      ],
-      "env": [
-        "OPENAI_API_KEY"
-      ]
+      "bins": ["curl"],
+      "env": ["OPENAI_API_KEY"]
     }
   },
   {
@@ -368,9 +304,7 @@
     "name": "openhue",
     "path": "skills/openhue/SKILL.md",
     "requires": {
-      "bins": [
-        "openhue"
-      ]
+      "bins": ["openhue"]
     }
   },
   {
@@ -380,9 +314,7 @@
     "name": "oracle",
     "path": "skills/oracle/SKILL.md",
     "requires": {
-      "bins": [
-        "oracle"
-      ]
+      "bins": ["oracle"]
     }
   },
   {
@@ -392,9 +324,7 @@
     "name": "ordercli",
     "path": "skills/ordercli/SKILL.md",
     "requires": {
-      "bins": [
-        "ordercli"
-      ]
+      "bins": ["ordercli"]
     }
   },
   {
@@ -404,12 +334,8 @@
     "name": "ostium",
     "path": "skills/ostium/SKILL.md",
     "requires": {
-      "bins": [
-        "python3"
-      ],
-      "env": [
-        "RPC_URL"
-      ]
+      "bins": ["python3"],
+      "env": ["RPC_URL"]
     }
   },
   {
@@ -419,9 +345,7 @@
     "name": "peekaboo",
     "path": "skills/peekaboo/SKILL.md",
     "requires": {
-      "bins": [
-        "peekaboo"
-      ]
+      "bins": ["peekaboo"]
     }
   },
   {
@@ -431,10 +355,7 @@
     "name": "rain",
     "path": "skills/rain/SKILL.md",
     "requires": {
-      "env": [
-        "AGENTGLOB_RUNTIME_URL",
-        "AGENTGLOB_RUNTIME_TOKEN"
-      ]
+      "env": ["AGENTGLOB_RUNTIME_URL", "AGENTGLOB_RUNTIME_TOKEN"]
     }
   },
   {
@@ -444,10 +365,7 @@
     "name": "rain-create",
     "path": "skills/rain-create/SKILL.md",
     "requires": {
-      "env": [
-        "AGENTGLOB_RUNTIME_URL",
-        "AGENTGLOB_RUNTIME_TOKEN"
-      ]
+      "env": ["AGENTGLOB_RUNTIME_URL", "AGENTGLOB_RUNTIME_TOKEN"]
     }
   },
   {
@@ -457,12 +375,8 @@
     "name": "sag",
     "path": "skills/sag/SKILL.md",
     "requires": {
-      "bins": [
-        "sag"
-      ],
-      "env": [
-        "ELEVENLABS_API_KEY"
-      ]
+      "bins": ["sag"],
+      "env": ["ELEVENLABS_API_KEY"]
     }
   },
   {
@@ -472,10 +386,7 @@
     "name": "session-logs",
     "path": "skills/session-logs/SKILL.md",
     "requires": {
-      "bins": [
-        "jq",
-        "rg"
-      ]
+      "bins": ["jq", "rg"]
     }
   },
   {
@@ -485,10 +396,7 @@
     "name": "sherpa-onnx-tts",
     "path": "skills/sherpa-onnx-tts/SKILL.md",
     "requires": {
-      "env": [
-        "SHERPA_ONNX_RUNTIME_DIR",
-        "SHERPA_ONNX_MODEL_DIR"
-      ]
+      "env": ["SHERPA_ONNX_RUNTIME_DIR", "SHERPA_ONNX_MODEL_DIR"]
     }
   },
   {
@@ -506,9 +414,7 @@
     "name": "songsee",
     "path": "skills/songsee/SKILL.md",
     "requires": {
-      "bins": [
-        "songsee"
-      ]
+      "bins": ["songsee"]
     }
   },
   {
@@ -518,9 +424,7 @@
     "name": "sonoscli",
     "path": "skills/sonoscli/SKILL.md",
     "requires": {
-      "bins": [
-        "sonos"
-      ]
+      "bins": ["sonos"]
     }
   },
   {
@@ -538,9 +442,7 @@
     "name": "summarize",
     "path": "skills/summarize/SKILL.md",
     "requires": {
-      "bins": [
-        "summarize"
-      ]
+      "bins": ["summarize"]
     }
   },
   {
@@ -550,9 +452,7 @@
     "name": "things-mac",
     "path": "skills/things-mac/SKILL.md",
     "requires": {
-      "bins": [
-        "things"
-      ]
+      "bins": ["things"]
     }
   },
   {
@@ -562,9 +462,7 @@
     "name": "tmux",
     "path": "skills/tmux/SKILL.md",
     "requires": {
-      "bins": [
-        "tmux"
-      ]
+      "bins": ["tmux"]
     }
   },
   {
@@ -574,13 +472,8 @@
     "name": "trello",
     "path": "skills/trello/SKILL.md",
     "requires": {
-      "bins": [
-        "jq"
-      ],
-      "env": [
-        "TRELLO_API_KEY",
-        "TRELLO_TOKEN"
-      ]
+      "bins": ["jq"],
+      "env": ["TRELLO_API_KEY", "TRELLO_TOKEN"]
     }
   },
   {
@@ -590,9 +483,7 @@
     "name": "video-frames",
     "path": "skills/video-frames/SKILL.md",
     "requires": {
-      "bins": [
-        "ffmpeg"
-      ]
+      "bins": ["ffmpeg"]
     }
   },
   {
@@ -610,9 +501,7 @@
     "name": "wacli",
     "path": "skills/wacli/SKILL.md",
     "requires": {
-      "bins": [
-        "wacli"
-      ]
+      "bins": ["wacli"]
     }
   },
   {
@@ -622,10 +511,7 @@
     "name": "wallet",
     "path": "skills/wallet/SKILL.md",
     "requires": {
-      "env": [
-        "AGENTGLOB_RUNTIME_URL",
-        "AGENTGLOB_RUNTIME_TOKEN"
-      ]
+      "env": ["AGENTGLOB_RUNTIME_URL", "AGENTGLOB_RUNTIME_TOKEN"]
     }
   },
   {
@@ -635,9 +521,7 @@
     "name": "weather",
     "path": "skills/weather/SKILL.md",
     "requires": {
-      "bins": [
-        "curl"
-      ]
+      "bins": ["curl"]
     }
   }
 ]
