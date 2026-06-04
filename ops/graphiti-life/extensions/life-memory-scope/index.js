@@ -91,7 +91,7 @@ export default {
         }
         return { params: { ...(event && event.params ? event.params : {}), __group_id: groupId } };
       },
-      { priority: 100 },
+      { name: "pin-graphiti-group", priority: 100 },
     );
     logger.info(
       "[life-memory-scope] before_tool_call hook registered (pins __group_id for mcp__graphiti__*)",
