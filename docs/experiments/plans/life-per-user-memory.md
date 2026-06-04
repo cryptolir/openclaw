@@ -1,9 +1,84 @@
 # Per-User Memory for the **"life"** Agent — Architecture Plan
 
-**Status:** Draft for review (codex code-review pass)
+**Status:** Reviewed (codex, commit `4656892f0`) — revised, **ready to execute**.
 **Scope:** The `life` agent (Havaya.me) OpenClaw gateway **only** — not a system-wide / multi-agent change.
 **Author:** handover session, 2026-06-03
 **Predecessor:** the existing Havaya per-user "user-file" section mechanism (`save_user_section` tool, app-key auth, lowercased-userId filename, `life` on the US host).
+
+---
+
+## 0. Revision 2 — synced with codex review (2026-06-04)
+
+Codex verdict (see `life-per-user-memory-architecture-review.md`, same branch): **conditional
+go — directionally sound**, but the scoping proxy must become a strict **capability boundary**
+and per-session identity handoff must be made concrete. This section folds in every codex note
+plus decisions locked with the owner. **It supersedes any conflicting detail in §1–§10 below.**
+
+**Owner decisions locked:**
+
+- "Show me my file" is an **agent-level capability keyed by the canonical userId** — the
+  channel (Telegram/app) is just transport. Generalize the current app-only `save_user_section`
+  path to serve **both** channels off the canonical userId.
+- **Raw writes every turn** (accepted risk: raw episode text reaches the embeddings/LLM
+  provider; mitigate via provider choice + erasure, not redaction, in v1).
+- **No backfill** — start fresh; owner seeds user-files manually post-setup (seed list below).
+
+**Codex deltas applied:**
+
+1. **Identity (§3 / Phase 0) — revise.** Telegram per-user key = **`tg:<from.id>`** (the human
+   sender), **not `chat_id`**. Telegram **group-conversation** memory is a **v1 non-goal**
+   (reserve `tg-group:<chat.id>`). App key = **`app:<appUserId>`**. Same human across tg/app =
+   two scopes in v1 (explicit server-side linking deferred; blast radius is fragmented memory,
+   not leakage).
+
+2. **Scoping proxy (§4 / Phase 2) — BLOCK / security-critical.** Reframe "thin wrapper" →
+   **allowlist proxy / capability boundary**:
+   - Expose ONLY (v1): `add_memory` (group_id forced to current user), `search_nodes` and
+     `search_memory_facts` (group_ids forced to `[currentGroupId]`), optionally `get_episodes`
+     (same forcing).
+   - HIDE from the model: `get_entity_edge(uuid)`, `delete_entity_edge(uuid)`,
+     `delete_episode(uuid)`, `clear_graph(group_ids)`, `get_status()`, and all UUID/maintenance/
+     raw graph ops.
+   - **Strip `center_node_uuid`** in v1 (foreign-UUID ranking/error side channel); re-allow only
+     if verified to belong to `currentGroupId`.
+   - **Erasure = admin-only**, never model-exposed.
+   - **Per-session identity handoff — pick ONE and document it** (do _not_ rely on a static
+     agent-level env var): (a) proxy resolves group_id server-side from a signed per-session
+     token _(preferred)_, (b) bridge injects session context on every tool call, or (c) per-run
+     MCP process per session with a scoped env var. **First task: determine how mcp-bridge
+     actually passes session identity** (read `docs/gateway/bridge-protocol.md` + source), then choose.
+
+3. **User-file = visible artifact (§7 / Phase 5) — revise.** Keep the per-user **user-file** as
+   the human-readable "your file" surface; **Graphiti is recall/index only**, never the source
+   for "show me my file". **Generalize `save_user_section`** from `appUserId`-only to the
+   canonical userId so it serves both channels. Graphiti may optionally write summaries _into_
+   the user-file via an explicit scoped tool.
+
+4. **Deploy / wire (§8 / Phase 1+3) — clarify.** FalkorDB + Graphiti + allowlist proxy as a
+   small agent-local Docker Compose stack on US host `5.161.84.219` (~1 GB). Phase 3 = **create
+   OR update** `/root/.openclaw/agents/life/openclaw.json` (a missing file is expected for a
+   planned agent); use **kycbot's `mcp-bridge` block** as the template.
+
+5. **Recall/write loop (Phase 4).** Read-before-answer (`search_memory_facts`/`search_nodes`),
+   **write-after-turn raw** (`add_memory`) every turn (owner decision).
+
+6. **Tests (Phase 6) — revise.** Add **adversarial proxy-level** tests, not just happy-path:
+   cross-`group_id` read returns nothing; UUID/delete/clear/status tools are not callable;
+   `center_node_uuid` injection is stripped; per-channel recall works (`from.id` and `appUserId`).
+
+**Recommended seed content** (owner adds user-files manually post-setup), per user:
+identity basics (name, pronouns, timezone/locale, language); communication preferences
+(tone, length, do/don't, hard boundaries); goals & active projects; key people/relationships;
+recurring context (routines, important dates; health/dietary only if consented); constraints
+the agent must always respect; and a **"never store" note** (credentials/secrets) at the top.
+
+**Still-open (carried into execution):** exact mcp-bridge session-identity mechanism (drives
+Phase 2); embeddings/LLM provider; multi-store **erasure contract** (Graphiti + user-file +
+transcripts + logs + provider traces); confirm final tool allowlist and `center_node_uuid`
+disabled in v1.
+
+**Phase verdicts (codex):** Phase 1 Sound · Phases 0, 2, 3, 5, 6 Needs-revision (applied above)
+· Phase 4 Sound-with-guardrails.
 
 ---
 
