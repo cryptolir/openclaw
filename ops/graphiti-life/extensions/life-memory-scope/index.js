@@ -73,28 +73,35 @@ export default {
 
   async activate(api) {
     const logger = api.logger;
-    api.registerHook(
-      "before_tool_call",
-      async (event, ctx) => {
-        const toolName = (event && event.toolName) || (ctx && ctx.toolName) || "";
-        if (!toolName.startsWith("mcp__graphiti__")) return; // only scope memory tools
-        const sessionKey = ctx && ctx.sessionKey;
-        const groupId = await resolveGroupId(sessionKey, logger);
-        if (!groupId) {
-          logger?.warn?.(
-            `[life-memory-scope] no per-user scope for session "${sessionKey}" — blocking ${toolName}`,
-          );
-          return {
-            block: true,
-            blockReason: "memory unavailable: no per-user scope for this session",
-          };
-        }
-        return { params: { ...(event && event.params ? event.params : {}), __group_id: groupId } };
-      },
-      { name: "pin-graphiti-group", priority: 100 },
-    );
-    logger.info(
-      "[life-memory-scope] before_tool_call hook registered (pins __group_id for mcp__graphiti__*)",
-    );
+    // IMPORTANT: use api.on() (typed hooks → registry.typedHooks), NOT
+    // api.registerHook() (file-based internal hooks). The gateway tool-call path
+    // (runBeforeToolCallHook → getGlobalHookRunner → hasHooks/getHooksForName)
+    // only consults typedHooks, so only api.on() handlers actually fire on tools.
+    const handler = async (event, ctx) => {
+      const toolName = (event && event.toolName) || (ctx && ctx.toolName) || "";
+      if (!toolName.startsWith("mcp__graphiti__")) return; // only scope memory tools
+      const sessionKey = ctx && ctx.sessionKey;
+      const groupId = await resolveGroupId(sessionKey, logger);
+      if (!groupId) {
+        logger?.warn?.(
+          `[life-memory-scope] no per-user scope for session "${sessionKey}" — blocking ${toolName}`,
+        );
+        return {
+          block: true,
+          blockReason: "memory unavailable: no per-user scope for this session",
+        };
+      }
+      logger?.debug?.(`[life-memory-scope] scoped ${toolName} -> ${groupId}`);
+      return { params: { ...(event && event.params ? event.params : {}), __group_id: groupId } };
+    };
+    if (typeof api.on === "function") {
+      api.on("before_tool_call", handler, { priority: 100 });
+      logger.info(
+        "[life-memory-scope] before_tool_call typed hook registered via api.on (pins __group_id)",
+      );
+    } else {
+      api.registerHook("before_tool_call", handler, { name: "pin-graphiti-group", priority: 100 });
+      logger.warn("[life-memory-scope] api.on unavailable — fell back to registerHook");
+    }
   },
 };

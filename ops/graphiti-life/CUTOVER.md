@@ -90,6 +90,27 @@ Expect: mcp-bridge starts "graphiti" with 4 tools; life-memory-scope hook regist
 
 ## 6. Smoke test (per-channel + isolation) — see Phase 6 in the plan.
 
+## Plugin-loading requirements (learned the hard way during cutover)
+
+A first-party agent-extension plugin must satisfy ALL of these or the gateway
+either ignores it or crash-loops on "Invalid config":
+
+1. **`openclaw.plugin.json` must include `configSchema`** (an object). Missing it →
+   "plugin manifest requires configSchema" → crash-loop. Use
+   `{ "type": "object", "properties": {}, "additionalProperties": false }` if no config.
+2. **Directory must be traversable by the container uid (1000):** `chmod 0755` the
+   dir (a `0744` dir blocks discovery silently → "plugin not found"). `chown 1000:1000`.
+3. **Register hooks with `api.on(hookName, handler, {priority})`, NOT
+   `api.registerHook(...)`.** Only `api.on` feeds `registry.typedHooks`, which is what
+   the tool-call path (`runBeforeToolCallHook` → `getGlobalHookRunner` →
+   `hasHooks`) consults. `registerHook` lands in the file-based internal-hook bucket
+   and never fires on tool calls (and needs `opts.name` or it no-ops).
+4. **Enable the hook system:** agent config `hooks.internal.enabled = true`.
+5. **Pin trust:** `plugins.allow = ["telegram","mcp-bridge","life-memory-scope"]`
+   (else a warning + auto-load of discovered plugins).
+6. **Per-run activation:** plugins activate per agent run, so the proxy is spawned
+   and the hook re-registered on every message — this is normal, not a restart.
+
 ## Rollback
 
 ```bash
