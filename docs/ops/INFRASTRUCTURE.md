@@ -52,8 +52,9 @@ A separate **Coolify** host (not part of the Hetzner agent fleet, not the dev bo
 `cryptolir/openclaw-dashboard` — **and `havaya.me` / `www.havaya.me` / `app.havaya.me`** (all
 resolve here). Havaya release path: dev (204.168.223.245) → git (`cryptolir/Havaya.me`, push to
 `main`) → Coolify auto-deploy via webhook
-`http://178.104.184.3:8000/api/v1/deploy?uuid=ravzu60mllwywm4pzmucn796&force=false`.
-(The Coolify install on the dev host is legacy/inactive — this is the live one.)
+`http://178.104.184.3:8000/api/v1/deploy?uuid=<REDACTED — stored in deploy config>&force=false`.
+(Deploy-webhook uuid is a secret; not stored in this repo. The Coolify install on the dev
+host is legacy/inactive — this is the live one.)
 
 ---
 
