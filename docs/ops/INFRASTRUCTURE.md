@@ -28,7 +28,7 @@
   • all source repos          • uniform image v2026.05.24.1                    • + graphiti-life (Graphiti + FalkorDB)
   • dev DBs (pg + mysql)      • RAM ~99% used ⚠                               • RAM ~94% used ⚠ · image drift ⚠
 
-  havaya.me / app.havaya.me ──► 178.104.184.3  (EXTERNAL host, outside this fleet — not managed here)
+  havaya.me / app.havaya.me ──► 178.104.184.3  (COOLIFY server — hosts all AgentGlob web/apps + Havaya)
 ```
 
 ---
@@ -43,7 +43,17 @@
 
 ¹ Aliases `1stclaw`/`2ndclaw` are defined in the **dev host's** `~/.ssh/config` and used by `deploy.sh`. From a laptop, connect by IP with the key above.
 
-All three run Ubuntu (Linux 6.8.x).
+All three Hetzner hosts run Ubuntu (Linux 6.8.x).
+
+### Coolify server (production web / apps) — `178.104.184.3`
+
+A separate **Coolify** host (not part of the Hetzner agent fleet, not the dev box). It hosts
+**all AgentGlob-related websites and apps** — frontends tied to `cryptolir/openclaw` and
+`cryptolir/openclaw-dashboard` — **and `havaya.me` / `www.havaya.me` / `app.havaya.me`** (all
+resolve here). Havaya release path: dev (204.168.223.245) → git (`cryptolir/Havaya.me`, push to
+`main`) → Coolify auto-deploy via webhook
+`http://178.104.184.3:8000/api/v1/deploy?uuid=ravzu60mllwywm4pzmucn796&force=false`.
+(The Coolify install on the dev host is legacy/inactive — this is the live one.)
 
 ---
 
@@ -166,12 +176,12 @@ failure. `check-ports.sh` validates port hygiene. Registry:
 
 ## 10. Domains & DNS
 
-| Domain                                | Resolves to            | Served by                                                      |
-| ------------------------------------- | ---------------------- | -------------------------------------------------------------- |
-| `app.agentglob.com`                   | `34.111.250.8`         | Cloud Run `openclaw-dashboard` (Google Frontend)               |
-| `agentglob.com`                       | (no A record observed) | —                                                              |
-| `havaya.me` / `www` / `app.havaya.me` | `178.104.184.3`        | **External host, not in this fleet** _(inferred — unverified)_ |
-| `agentglob-web-…run.app`              | Google                 | Cloud Run `agentglob-web`                                      |
+| Domain                                | Resolves to            | Served by                                                  |
+| ------------------------------------- | ---------------------- | ---------------------------------------------------------- |
+| `app.agentglob.com`                   | `34.111.250.8`         | Cloud Run `openclaw-dashboard` (Google Frontend)           |
+| `agentglob.com`                       | (no A record observed) | —                                                          |
+| `havaya.me` / `www` / `app.havaya.me` | `178.104.184.3`        | **Coolify server** (hosts all AgentGlob web/apps + Havaya) |
+| `agentglob-web-…run.app`              | Google                 | Cloud Run `agentglob-web`                                  |
 
 ---
 
@@ -185,8 +195,9 @@ failure. `check-ports.sh` validates port hygiene. Registry:
    not on a single version.
 3. **`thebook` runs on BOTH EU and US** — same agent name on two hosts (telegram token not set
    in either config). Confirm which is canonical; a duplicate could double-answer or go stale.
-4. **`havaya.me` host unknown:** now resolves to `178.104.184.3`, outside this fleet (Coolify
-   on the dev host is inactive). Ownership/location of that host should be documented.
+4. **Coolify server `178.104.184.3`** hosts all AgentGlob web/apps + Havaya — a fourth host
+   outside the agent fleet. Document its access (SSH/creds), backups, and resourcing; the dev
+   host's Coolify is legacy/inactive and should not be confused with it.
 5. **Agents publicly exposed** on `0.0.0.0:1879x`, protected only by the gateway token — no
    network-level allowlist / proxy in front.
 6. **Single SSH key** (`~/.ssh/hetzner-openclaw`) for all hosts.
