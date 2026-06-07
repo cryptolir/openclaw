@@ -50,11 +50,12 @@ All three Hetzner hosts run Ubuntu (Linux 6.8.x).
 A separate **Coolify** host (not part of the Hetzner agent fleet, not the dev box). It hosts
 **all AgentGlob-related websites and apps** — frontends tied to `cryptolir/openclaw` and
 `cryptolir/openclaw-dashboard` — **and `havaya.me` / `www.havaya.me` / `app.havaya.me`** (all
-resolve here). Havaya release path: dev (204.168.223.245) → git (`cryptolir/Havaya.me`, push to
-`main`) → Coolify auto-deploy via webhook
-`http://178.104.184.3:8000/api/v1/deploy?uuid=<REDACTED — stored in deploy config>&force=false`.
-(Deploy-webhook uuid is a secret; not stored in this repo. The Coolify install on the dev
-host is legacy/inactive — this is the live one.)
+resolve here). Havaya deploy: run `./deploy.sh patch|minor|major` on the dev server →
+`git push origin main --follow-tags` → **GitHub webhook fires Coolify automatically** →
+Coolify pulls + rebuilds. The Coolify deploy-webhook URL is a **manual force-redeploy
+fallback** only — not the normal deploy path. (Webhook uuid is a secret, not stored in
+this repo; stored in deploy config. The Coolify install on the dev host is
+legacy/inactive — this is the live one.)
 
 ---
 
