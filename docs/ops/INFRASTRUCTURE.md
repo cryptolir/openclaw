@@ -159,6 +159,23 @@ health-checks the container (3 retries), and **auto-rolls-back** to the previous
 failure. `check-ports.sh` validates port hygiene. Registry:
 `europe-west1-docker.pkg.dev/gold-verve-459312-e7/openclaw-gateway/gateway`.
 
+### Deploy protocol — git + docs sync is MANDATORY
+
+> A production deploy is **not complete** until the change is in git **and** the project
+> docs/memory reflect it. "Changed on a host but not in git" is an incident to reconcile,
+> not a normal state.
+
+Every prod change — gateway image, agent `openclaw.json` / `docker.env`, extensions, hooks,
+prompts (`AGENTS.md` etc.), or infra/compose (`/opt/...`) — must, **as part of the same task**:
+
+1. **Commit + push** the code/config/infra to the relevant repo + PR (never leave prod
+   changes only on the host). Host-side configs that can't be committed verbatim (secrets)
+   are mirrored as redacted records under `ops/`.
+2. **Update the docs this affects** — this file (`INFRASTRUCTURE.md`), the relevant
+   plan/`STATUS`, and any agent prompt/config records under `ops/`.
+3. **Record the release** (tag + `sourceSha` via the platform release API) where applicable.
+4. **Keep a host-side backup** of any edited config (`*.bak.pre-<change>`) for rollback.
+
 ---
 
 ## 9. Source repositories (on the dev host, GitHub org `cryptolir`)
