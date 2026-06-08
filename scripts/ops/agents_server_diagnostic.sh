@@ -25,6 +25,8 @@
 #   - provider model-discovery timeout (e.g. venice) ............ P2
 #   - disk >= DISK_WARN% ........................................ P2
 #   - no docker log rotation (unbounded logs) ................... P2
+#   - agent session dir large (>SESSION_DIR_WARN_MB MiB) ......... P2
+#   - agent workspace dir large (>WORKSPACE_DIR_WARN_MB MiB) ..... P1
 #   - mcp-bridge "No servers configured" noise .................. P3
 #
 # Usage:
@@ -53,6 +55,8 @@ DISK_CRIT=90          # % root fs used → P0
 MEM_AVAIL_WARN=500    # MiB available → P1 below this
 SWAP_USED_WARN=1024   # MiB swap in use → P1 above this (thrashing)
 LOG_SINCE="30m"       # gateway-log lookback window
+SESSION_DIR_WARN_MB=100   # MiB per-agent sessions/ dir  → P2
+WORKSPACE_DIR_WARN_MB=500 # MiB per-agent workspace/ dir → P1
 
 # ── Args ─────────────────────────────────────────────────────────────────────
 SELECT="" ; WRITE=1
@@ -79,7 +83,7 @@ remote_probe() {
   local name="$1" ip="$2"
   ssh -i "$SSH_KEY" -o ConnectTimeout=15 -o BatchMode=yes -o StrictHostKeyChecking=accept-new \
       "root@${ip}" \
-      "HOST_NAME='${name}' LOG_SINCE='${LOG_SINCE}' DISK_WARN='${DISK_WARN}' DISK_CRIT='${DISK_CRIT}' MEM_AVAIL_WARN='${MEM_AVAIL_WARN}' SWAP_USED_WARN='${SWAP_USED_WARN}' bash -s" 2>/dev/null <<'REMOTE'
+      "HOST_NAME='${name}' LOG_SINCE='${LOG_SINCE}' DISK_WARN='${DISK_WARN}' DISK_CRIT='${DISK_CRIT}' MEM_AVAIL_WARN='${MEM_AVAIL_WARN}' SWAP_USED_WARN='${SWAP_USED_WARN}' SESSION_DIR_WARN_MB='${SESSION_DIR_WARN_MB}' WORKSPACE_DIR_WARN_MB='${WORKSPACE_DIR_WARN_MB}' bash -s" 2>/dev/null <<'REMOTE'
 set -uo pipefail
 H="${HOST_NAME:-?}"
 em(){ printf '%s\n' "$*"; }
@@ -153,6 +157,20 @@ for cname in $(docker ps -a --format '{{.Names}}' | grep -- '-openclaw-gateway-1
     && em "ISSUE|P2|$H|$agent|Model-provider discovery timeout|A provider (e.g. venice) discovery is timing out; fallback may be impaired."
   printf '%s' "$logs" | grep -qiE 'No servers configured' \
     && em "ISSUE|P3|$H|$agent|mcp-bridge no servers|mcp-bridge loaded with no servers (log noise; harmless)."
+
+  # ── per-agent disk: sessions + workspace (outside docker log rotation) ────
+  agdir="/root/.openclaw/agents/${agent}"
+  for _chk in "sessions:${SESSION_DIR_WARN_MB}:P2" "workspace:${WORKSPACE_DIR_WARN_MB}:P1"; do
+    _sub="${_chk%%:*}"; _rest="${_chk#*:}"; _thresh="${_rest%%:*}"; _pri="${_rest#*:}"
+    _path="${agdir}/${_sub}"
+    [ -d "$_path" ] || continue
+    _mb=$(du -sm "$_path" 2>/dev/null | awk '{print int($1+0)}')
+    [ -n "$_mb" ] || continue
+    [ "$_mb" -gt 0 ]  || continue
+    _st=ok; [ "$_mb" -ge "$_thresh" ] && _st=warn
+    em "METRIC|$H|agent:${agent}:${_sub}_mb|${_mb}MB|${_st}"
+    [ "$_st" = warn ] && em "ISSUE|${_pri}|$H|${agent}|Large ${_sub} dir|${_sub}/ is ${_mb}MB (warn>=${_thresh}MB); grows unbounded — consider archiving old data."
+  done
 done
 
 em "METRIC|$H|reachable|yes|ok"
