@@ -1,0 +1,7 @@
+{
+  "id": "life-access-scope",
+  "name": "Life Access Scope",
+  "description": "Denies enumeration/shell/subagent/out-of-workspace file tools for app-user sessions (stopgap until per-user workspace isolation).",
+  "version": "1.0.0",
+  "configSchema": { "type": "object", "properties": {}, "additionalProperties": false }
+}
