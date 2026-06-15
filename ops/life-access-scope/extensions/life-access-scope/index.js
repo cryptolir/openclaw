@@ -69,6 +69,20 @@ function pathArg(params) {
   return params.path ?? params.file ?? params.filename ?? params.filepath;
 }
 
+// EXCEPTION to the out-of-workspace read block: shared SKILL files under
+// workspace/skills/ are non-secret methodology the agent must read to APPLY a
+// skill (e.g. tal-meeting-summary, personal-vision-exercise) — they hold no
+// per-user data and no host secrets. The agent references them by absolute path
+// (/home/node/.openclaw/workspace/skills/…), which pathEscapesWorkspace() flags,
+// so READS (only) of that subtree are allowed here. Traversal ("..") stays denied.
+function isWorkspaceSkillRead(toolName, p) {
+  if (toolName !== "read") return false;
+  if (typeof p !== "string") return false;
+  const s = p.trim().replace(/\\/g, "/");
+  if (s.includes("..")) return false;
+  return s.includes("/workspace/skills/");
+}
+
 export default {
   id: "life-access-scope",
   name: "Life Access Scope",
@@ -91,7 +105,7 @@ export default {
 
         if (PATH_TOOLS.has(toolName)) {
           const p = pathArg(event && event.params);
-          if (pathEscapesWorkspace(p)) {
+          if (pathEscapesWorkspace(p) && !isWorkspaceSkillRead(toolName, p)) {
             logger?.info?.(
               `[life-access-scope] blocked ${toolName} path "${p}" for app session "${sessionKey}"`,
             );
