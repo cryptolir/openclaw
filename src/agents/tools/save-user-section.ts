@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { Type } from "@sinclair/typebox";
@@ -173,7 +174,24 @@ export function createSaveUserSectionTool(options: {
       }
 
       await fs.mkdir(usersDir, { recursive: true });
-      await fs.writeFile(filePath, next, "utf-8");
+      // Atomic write: write to a temp file in the same dir, then rename over the
+      // target. rename(2) is atomic on one filesystem, so a concurrent reader
+      // (the dashboard section reader, or the app_profile seed's CAS read) never
+      // observes a half-written file — which could otherwise yield torn markers
+      // and a reader "ambiguous" 500. (per-user-profile plan; the dashboard seed
+      // already uses flock+temp+rename CAS on the same file. Unifying the lock
+      // domain so the two writers serialise is a tracked follow-up.)
+      const tmpPath = path.join(
+        usersDir,
+        `.${appUserId}.md.tmp.${crypto.randomBytes(6).toString("hex")}`,
+      );
+      await fs.writeFile(tmpPath, next, "utf-8");
+      try {
+        await fs.rename(tmpPath, filePath);
+      } catch (err) {
+        await fs.rm(tmpPath, { force: true }).catch(() => {});
+        throw err;
+      }
       return jsonResult({ ok: true, section, bytes: Buffer.byteLength(next, "utf8") });
     },
   };
