@@ -59,7 +59,9 @@ export function assertSectionContentWritable(section: string, content: string): 
   const cap = sectionContentCap(section);
   const bytes = Buffer.byteLength(content, "utf8");
   if (bytes > cap) {
-    throw new ToolInputError(`section "${section}" content is ${bytes} bytes, over the ${cap}-byte cap`);
+    throw new ToolInputError(
+      `section "${section}" content is ${bytes} bytes, over the ${cap}-byte cap`,
+    );
   }
 }
 

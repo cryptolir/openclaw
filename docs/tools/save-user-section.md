@@ -40,11 +40,11 @@ dashboard route `GET /api/public/chat/{agent}/user-file` (repo
 Only these section names are writable (`WRITABLE_SECTIONS` in
 `src/agents/tools/save-user-section.ts`); any other name is rejected:
 
-| Section | Meaning |
-|---|---|
-| `User_D_Prompt` | up to ~5 short suggested prompts (one per line) shown as clickable starters on the app home page |
-| `app_note` | one short per-user note/focus shown on the home page |
-| `app_profile` | per-user profile card — name + a short running summary the agent maintains; seeded from the app account and injected into the agent’s context every turn (see the per-user-profile plan) |
+| Section         | Meaning                                                                                                                                                                                  |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `User_D_Prompt` | up to ~5 short suggested prompts (one per line) shown as clickable starters on the app home page                                                                                         |
+| `app_note`      | one short per-user note/focus shown on the home page                                                                                                                                     |
+| `app_profile`   | per-user profile card — name + a short running summary the agent maintains; seeded from the app account and injected into the agent’s context every turn (see the per-user-profile plan) |
 
 This list is intentionally narrow so the tool can never overwrite `SOUL.md`,
 `MEMORY.md`, or arbitrary workspace files.
@@ -83,7 +83,7 @@ resolves, so writer and reader agree on identity by construction.
 
 ## Agent guidance (workspace `AGENTS.md`)
 
-The owning agent's `workspace/AGENTS.md` tells it *when* to call the tool — after
+The owning agent's `workspace/AGENTS.md` tells it _when_ to call the tool — after
 it has learned enough about the user to suggest useful prompts — and that the
 write is an upsert (keep it current, don't append duplicates). For the `life`
 agent this lives under the **App Profile Sections (Havaya web app)** section.
