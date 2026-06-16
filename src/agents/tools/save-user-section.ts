@@ -47,6 +47,10 @@ export function sectionContentCap(section: string): number {
  *    markers and make the file fail closed on the section reader (codex §3); or
  *  - exceeds the section’s byte cap (codex §5).
  * Pure + exported so it is unit-tested and reused by callers.
+ *
+ * CROSS-REPO CONTRACT: the marker rule (`content.includes("<!-- app:")`) must
+ * stay equivalent to `containsAppMarker` in openclaw-dashboard
+ * (`lib/user-file-core.ts`); change both sides together.
  */
 export function assertSectionContentWritable(section: string, content: string): void {
   if (content.includes("<!-- app:")) {
