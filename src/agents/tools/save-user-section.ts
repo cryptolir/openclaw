@@ -185,10 +185,12 @@ export function createSaveUserSectionTool(options: {
         usersDir,
         `.${appUserId}.md.tmp.${crypto.randomBytes(6).toString("hex")}`,
       );
-      await fs.writeFile(tmpPath, next, "utf-8");
       try {
+        await fs.writeFile(tmpPath, next, "utf-8");
         await fs.rename(tmpPath, filePath);
       } catch (err) {
+        // Clean up the temp on ANY failure: writeFile may have created/truncated
+        // it before failing (ENOSPC/EIO). Only a successful rename leaves no temp.
         await fs.rm(tmpPath, { force: true }).catch(() => {});
         throw err;
       }
