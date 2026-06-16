@@ -3,8 +3,9 @@
 **Status:** PLAN — for review (not yet implemented)
 **Author:** Liran Peretz (with Claude)
 **Date:** 2026-06-16
-**Scope:** `openclaw` (gateway writer + hook + agent prose), `openclaw-dashboard` (reader/endpoint),
-`app.havaya` (consumer), live `life` agent on the US host.
+**Revision:** v2 — incorporates codex review [`4508313642`](https://github.com/cryptolir/openclaw/pull/64#pullrequestreview-4508313642) (see §10).
+**Scope:** `openclaw` (gateway writer + bootstrap injection + agent prose), `openclaw-dashboard`
+(reader/endpoint), `app.havaya` (consumer), live `life` agent on the US host.
 **Related:** [`life-per-user-memory.md`](./life-per-user-memory.md),
 [`life-per-user-memory-architecture-review.md`](./life-per-user-memory-architecture-review.md),
 dashboard `docs/peruser-user-file-asbuilt.md`, app.havaya `AGENTGLOB_*`.
@@ -79,9 +80,11 @@ that (a) holds name + collected info, (b) is auto-injected into the agent's cont
 1. **Population:** *Seed from Clerk + agent enriches.* On first contact, seed `app_profile.name`
    from the Clerk account so the file (and greeting) work immediately for everyone; the agent then
    corrects/enriches the profile as it learns. The file stays the source of truth but is never empty.
+   **Seeding is name-only and non-destructive** (see §5b / §10.1) — it must never overwrite the
+   agent's `summary:` / `call_them:`.
 2. **Scope:** *Rich profile / running summary.* `app_profile` holds name + a few stable fields + an
-   evolving summary the agent maintains. This is injected every turn, so it is kept reasonably short
-   (a card, not a transcript); the deep history remains in Graphiti.
+   evolving summary the agent maintains. This is injected every turn, so it is **hard-capped** in size
+   (§5a / §10.5), not merely soft-budgeted.
 
 ---
 
@@ -101,11 +104,12 @@ summary: |
 ```
 
 - **Greeting** parses the `name:` line.
-- **Agent context injection** injects the whole block (human-readable as-is).
+- **Agent context injection** injects the whole block (human-readable as-is) as a synthetic
+  `APP_PROFILE.md` bootstrap context file (§5a).
 - **Admin editor** shows/edits it verbatim (already renders the whole raw file).
-
-A soft size budget (e.g. summary ≤ ~600 chars) keeps the per-turn token cost bounded; the agent is
-instructed to keep it current rather than append.
+- **Parsing:** add a **shared parser + unit tests** (one source of truth used by the app, the
+  injection path, and the seed merge). YAML-ish chosen over fenced JSON for agent-friendliness; the
+  parser is lenient and the writer/endpoints enforce the invariants (no nested markers, size cap).
 
 ---
 
@@ -116,32 +120,44 @@ instructed to keep it current rather than append.
 - **Writer allowlist:** add `"app_profile"` to `WRITABLE_SECTIONS`
   (`src/agents/tools/save-user-section.ts:24`) so the agent can write it via
   `save_user_section("app_profile", …)`. Upsert semantics already replace (not append) a section.
-- **Context-injection hook `life-profile-context`** (NEW): for app sessions, resolve the
-  `appUserId` (same resolution as `save-user-section` / `life-memory-scope`), read
-  `workspace/users/<appUserId>.md`, extract the `app_profile` block, and inject it into the prompt as
-  a context file. **Commit it to `ops/graphiti-life/`** (the same place as `life-memory-scope` /
-  `graphiti-proxy`), which also closes the gap that `life-access-scope` currently has no in-repo source.
-  - **Open item (Phase 1 verification):** confirm the exact openclaw hook event for *prompt/context*
-    injection (the `bootstrap-extra-files` hook proves a context-injection surface exists; this hook
-    needs the per-user, session-scoped variant). If no suitable event exists, fall back to a small
-    in-gateway change to `loadWorkspaceBootstrapFiles` / bootstrap assembly that conditionally appends
-    the per-user profile for app sessions.
+- **Writer hardening** (codex §10.3, §10.5):
+  - **Marker-injection guard:** reject any section content containing a `<!-- app:` substring
+    (would otherwise create duplicate markers and make the file fail closed on the section reader).
+    Shared validator, applied here and in the dashboard endpoint.
+  - **Hard size cap:** reject writes whose `app_profile` block exceeds a fixed byte cap (proposal:
+    section ≤ 2 KB; `summary` ≤ ~800 chars). Clear tool error on overflow.
+- **Context injection — FIRST-CLASS in gateway bootstrap assembly** (codex §10.2, resolves the
+  former open item): when a session has a resolved `appUserId` **and** the per-user file contains an
+  allowlisted profile section, the gateway appends a **synthetic `APP_PROFILE.md`** context file to
+  the prompt during bootstrap assembly. Integration point: the existing **`agent:bootstrap` hook
+  context** (already exposes `sessionKey`, `sessionId`, `agentId`). Implemented in gateway bootstrap
+  assembly (not a `life`-only host hook) so parsing, tests, context reporting, and future agents live
+  in one place. **Defensive truncation on injection** to the size cap, independent of the writer cap.
+  - *Fallback only if a first-class hook proves infeasible:* a host-side `life-profile-context` hook
+    in `ops/graphiti-life/`. Not preferred — kept as a documented escape hatch.
 
 ### 5b. `openclaw-dashboard`
 
 - **Reader allowlist:** add `"app_profile"` to `PUBLIC_SECTIONS.life`
   (`lib/user-file-core.ts:37`) so `getUserSection(userId, "app_profile")` returns it and the admin
   raw-write `validateMarkers` keeps it well-formed.
-- **App-authenticated section write** (NEW): a `PUT` that upserts a single allowlisted section,
-  gated by the existing write key + the allowlist, reusing the same marker `upsertSection` logic as
-  the agent tool. Lets the app seed `app_profile.name` without replicating marker logic or doing a
-  raw read-modify-write race.
+- **Non-destructive name seed** (codex §10.1 — replaces the earlier "section-write" endpoint):
+  a dedicated **`seedAppProfileNameIfMissing(userId, name)`** operation, exposed as an idempotent
+  endpoint gated by the existing write key. It does a **field-level merge under CAS/etag**: read the
+  current `app_profile` block, set `name:` **only if it is absent**, preserve `call_them:` /
+  `summary:` verbatim, write back with `If-Match`. It is **not** a raw "replace `app_profile`"
+  endpoint, so a seed can never delete agent-written fields. Reuses the same marker `upsertSection`
+  + marker-injection guard + size cap as the writer.
 
 ### 5c. `app.havaya`
 
 - **Seed on home load:** in `src/app/page.tsx`, read `app_profile`; if `name:` is missing and Clerk
-  has a first name, call the new section-write endpoint to seed `name:` (fire-and-forget / awaited
-  best-effort, guarded so a write failure never breaks the page).
+  has a first name, call `seedAppProfileNameIfMissing` for **the authenticated Clerk user only**
+  (best-effort, guarded so a write failure never breaks the page).
+- **Current-user-only access** (codex §10.4): all `app_profile` reads/writes go through a
+  **server-side Havaya helper that derives `userId` from the Clerk session** — never a route, server
+  action, or UI path that accepts an arbitrary `userId`. The app read/write keys stay server-only and
+  must not become a profile oracle.
 - **Greeting source:** the greeting reads the **file** (`app_profile.name`), falling back to Clerk
   `firstName` only transiently (before the first seed), then to plain `שלום!`. (Reverses the
   just-shipped Clerk-first behavior — file becomes primary.)
@@ -149,11 +165,13 @@ instructed to keep it current rather than append.
 
 ### 5d. Live `life` agent (US host, `/root/.openclaw/agents/life/…`)
 
-- Deploy + register the `life-profile-context` hook (`openclaw.json` plugins/hooks), restart the
-  `life` container (single-agent pin; no fleet deploy).
+- Roll the gateway image carrying the bootstrap-injection + writer hardening; pin `life` only
+  (`docker.env` + `docker compose -p life up -d`; no fleet deploy). No host hook needed in the
+  first-class path.
 - **Agent prose (SOUL.md / AGENTS.md):** instruct the agent to maintain `app_profile` as a running
-  summary via `save_user_section("app_profile", …)`, keep it concise/current (don't append), and
-  stop relying on the shared `USER.md` for app users. Back up the prose files first (no git on host).
+  summary via `save_user_section("app_profile", …)`, keep it concise/current (overwrite, don't
+  append; stay under the cap), never embed `<!-- app:` markers, and stop relying on the shared
+  `USER.md` for app users. Back up the prose files first (no git on host).
 
 ---
 
@@ -161,10 +179,10 @@ instructed to keep it current rather than append.
 
 | Component | Gate | Deploy | Who |
 |---|---|---|---|
-| openclaw (writer allowlist + hook) | tsgo build + `vitest` for the touched area | gateway image → pin `life` only (`docker.env` + `docker compose -p life up -d`) | us |
-| openclaw-dashboard (reader allowlist + write endpoint) | `npm run build` + `node --test` | Cloud Run (`europe-west1`) | **owner** |
-| app.havaya (seed + greeting) | `tsc --noEmit` (never `npm run build` — prisma migrate hits a real DB) | Coolify | **owner** |
-| life hook + prose | n/a (prose live next turn; hook needs container restart) | host files + restart | us |
+| openclaw (writer hardening + bootstrap injection) | tsgo build + `vitest` for the touched area (incl. new parser + marker/size tests) | gateway image → pin `life` only (`docker.env` + `docker compose -p life up -d`) | us |
+| openclaw-dashboard (reader allowlist + seed endpoint) | `npm run build` + `node --test` | Cloud Run (`europe-west1`) | **owner** |
+| app.havaya (seed + greeting + current-user helper) | `tsc --noEmit` (never `npm run build` — prisma migrate hits a real DB) | Coolify | **owner** |
+| life prose | n/a (live next turn) | host files | us |
 
 Two owner-gated deploys (Cloud Run, Coolify). Docs to update in the same PRs:
 openclaw `STATUS.md`; dashboard `docs/peruser-user-file-asbuilt.md`; app.havaya
@@ -174,52 +192,65 @@ openclaw `STATUS.md`; dashboard `docs/peruser-user-file-asbuilt.md`; app.havaya
 
 ## 7. Proposed build order (each phase independently safe)
 
-1. **Phase 1 — Plumbing.** Allowlists (writer + reader) + lock the `app_profile` format.
-   First task: **verify the openclaw context-injection hook event** (§5a open item). Nothing
-   user-visible yet. → openclaw + dashboard PRs.
-2. **Phase 2 — Seed + greeting from file.** Dashboard section-write endpoint; app seeds from Clerk on
-   home load and reads the file for the greeting. **Delivers observations 1 & 3** (file is the
-   source; admin editor shows name + profile). → dashboard + app.
-3. **Phase 3 — Context injection + agent maintenance.** Ship `life-profile-context`; update
-   SOUL/AGENTS so the agent maintains the running summary. **Delivers observation 2** (no more
-   reminding). → openclaw hook + US host.
+1. **Phase 1 — Plumbing + hardening.** Allowlists (writer + reader); the **shared parser**; the
+   **marker-injection guard** and **size cap** (writer + dashboard); lock the `app_profile` format.
+   Nothing user-visible yet. → openclaw + dashboard PRs.
+2. **Phase 2 — Seed + greeting from file.** The `seedAppProfileNameIfMissing` endpoint; app seeds
+   from Clerk (current-user-only helper) on home load and reads the file for the greeting.
+   **Delivers observations 1 & 3** (file is the source; admin editor shows name + profile).
+   → dashboard + app.
+3. **Phase 3 — Context injection + agent maintenance.** Gateway bootstrap injection of
+   `APP_PROFILE.md`; update SOUL/AGENTS so the agent maintains the running summary within the cap.
+   **Delivers observation 2** (no more reminding). → openclaw + US host.
 
 ---
 
-## 8. Risks & open questions
+## 8. Risks & residual concerns
 
-- **Hook event existence (§5a).** The cleanest design needs a per-user, session-scoped context hook.
-  `bootstrap-extra-files` proves a context-injection surface exists but is basename-restricted; the
-  per-user variant may require a small in-gateway change instead of a pure host hook. *Resolved in
-  Phase 1 before committing to the hook approach.*
-- **Per-turn token cost.** A rich running summary is injected every turn. Mitigation: soft size
-  budget + instruct the agent to keep it concise and current (overwrite, not append).
-- **Privacy / access scope.** `app_profile` is per-user and must obey the existing `life-access-scope`
-  boundary: an app user must never read another user's profile, and the profile is the agent's
-  operating context, not something to read back verbatim on request. The injection hook reads only the
-  *current* session's `appUserId` file. The reader allowlist already returns 404 for missing files.
-- **Seed write auth.** The app seeding needs a write path. Using a dedicated allowlisted section-write
-  endpoint (not the raw whole-file write) limits blast radius and avoids races.
-- **Name correction.** Seed = Clerk first name; the user may prefer a different name. The agent can
-  overwrite `name:` / set `call_them:` when the user states a preference.
-- **Greeting fallback.** Keep a transient Clerk fallback so users whose file isn't seeded yet (e.g.
-  first home load before the write lands) don't see a plain greeting. Drop only if the owner wants
-  strictly file-only.
+- **Per-turn token cost.** A running summary is injected every turn. Mitigation now **enforced**, not
+  advisory: hard size cap in the writer + defensive truncation on injection (§5a, §10.5).
+- **File corruption via marker injection.** Mitigated by the `<!-- app:` rejection guard on both
+  write paths (§5a, §5b, §10.3).
+- **Profile-oracle risk.** The app read key can request any `userId`. Mitigated by the
+  current-user-only Havaya helper contract (§5c, §10.4); the underlying trust model (server-held key)
+  is unchanged and matches `User_D_Prompt`.
+- **Seed/agent write race.** Mitigated by CAS/etag on the seed and name-only, non-destructive merge
+  (§5b, §10.1); the agent's writer remains the only writer of `summary:` / `call_them:`.
+- **Name correction.** Seed = Clerk first name; the agent can overwrite `name:` / set `call_them:`
+  when the user states a preference.
+- **Greeting fallback.** Keep a transient Clerk fallback so users whose file isn't seeded yet don't
+  see a plain greeting. Drop only if the owner wants strictly file-only.
 
 ---
 
-## 9. Reviewer notes (for codex)
+## 9. Reviewer asks — original (answered in §10)
 
-This is a **plan for review** — no code changes are included in this PR. Please scrutinize:
+The original asks (hook vs gateway, allowlist symmetry, seed mechanism, format, privacy) were posed
+to the reviewer and are now resolved by codex review `4508313642`; see §10.
 
-1. **§5a hook approach** — is a host-side per-user context hook the right mechanism, or should the
-   per-user profile injection be a first-class in-gateway feature (e.g. an opt-in per-user bootstrap
-   file resolved by `appUserId`)? The latter is more reusable across agents.
-2. **Allowlist symmetry** — adding `app_profile` to both `WRITABLE_SECTIONS` and `PUBLIC_SECTIONS`;
-   any reason a profile section should be readable-but-not-agent-writable, or vice versa?
-3. **Seed mechanism** — dedicated section-write endpoint vs. raw read-modify-write vs.
-   gateway-side seed when `appUserId` first lands on the session entry. Trade-offs on auth surface
-   and idempotency.
-4. **Format** — `key: value` + `summary:` block parseable by the app and readable by the agent;
-   better conventions welcome (e.g. fenced JSON for stricter parsing).
-5. **Privacy** — confirm the injection path cannot leak across users and respects `life-access-scope`.
+---
+
+## 10. Review resolution — codex `4508313642` (2026-06-16)
+
+All five points accepted and folded into the plan above.
+
+1. **[P1] Seed writes could wipe the running summary → FIXED.** Seeding is now
+   `seedAppProfileNameIfMissing(userId, name)`: a non-destructive, name-only field merge under
+   CAS/etag, never a raw section replace (§3.1, §5b). The agent's writer stays the sole writer of
+   `summary:` / `call_them:`.
+2. **[P1] Prefer first-class gateway injection over a life-only host hook → ADOPTED.** Injection is
+   implemented in gateway bootstrap assembly as a synthetic `APP_PROFILE.md`, using the existing
+   `agent:bootstrap` context (`sessionKey`/`sessionId`/`agentId`) as the integration point. Generic
+   app-user feature, one place for parsing/tests/context-reporting/future agents. Host hook kept only
+   as a documented fallback (§5a). This resolves the prior Phase-1 open item.
+3. **[P2] Marker-injection protection → ADDED.** Both `save_user_section` and the dashboard seed
+   endpoint reject content containing `<!-- app:`; shared validator + tests (§5a, §5b).
+4. **[P2] Tighten privacy around `PUBLIC_SECTIONS.life` → ADDED.** Explicit contract: `app.havaya`
+   reads/writes `app_profile` for the authenticated Clerk user only, via a server-side helper; no
+   arbitrary-`userId` route/UI; keys stay server-only (§5c).
+5. **[P3] Enforce a hard size cap, not just an instruction → ADDED.** Hard cap in the writer/tool
+   (reject overlarge) **and** defensive truncation on injection (§5a). Soft prose guidance retained
+   on top.
+
+**Format note (codex):** YAML-ish kept for agent-friendliness, with a shared parser + tests as the
+single source of truth (§4).
