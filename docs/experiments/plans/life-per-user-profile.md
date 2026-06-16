@@ -132,7 +132,10 @@ summary: |
   the prompt during bootstrap assembly. Integration point: the existing **`agent:bootstrap` hook
   context** (already exposes `sessionKey`, `sessionId`, `agentId`). Implemented in gateway bootstrap
   assembly (not a `life`-only host hook) so parsing, tests, context reporting, and future agents live
-  in one place. **Defensive truncation on injection** to the size cap, independent of the writer cap.
+  in one place. **Defensive truncation on injection**: the injection path MUST clamp the profile to
+  the 2 KB cap (`clampAppProfile`, the shared helper added on the dashboard read path) regardless of
+  how the section was written — admin/raw-edited files bypass the agent writer's cap (codex follow-up
+  reviews on #65/#121).
   - *Fallback only if a first-class hook proves infeasible:* a host-side `life-profile-context` hook
     in `ops/graphiti-life/`. Not preferred — kept as a documented escape hatch.
 
@@ -254,3 +257,25 @@ All five points accepted and folded into the plan above.
 
 **Format note (codex):** YAML-ish kept for agent-friendliness, with a shared parser + tests as the
 single source of truth (§4).
+
+---
+
+## 11. Follow-up reviews — codex `4508761517` (#121) + `4508761684` (#65), 2026-06-16
+
+Phase-1 follow-up reviews: no blockers. Changes applied:
+
+1. **`parseAppProfile` field-swallow (dashboard #121, P2) → FIXED.** The `summary: |` block now ends
+   at the first UNINDENTED known key, so a hand-edited profile that puts `summary` before other
+   fields parses correctly (indented / non-key lines stay summary content). + tests.
+2. **`app_profile` read/parse cap (dashboard #121, P2) → ADDED.** `clampAppProfile` /
+   `APP_PROFILE_MAX_BYTES` (2 KB) defensively bound the section; wired into the dashboard section
+   read path. Phase 3 injection MUST apply the same clamp before injecting (§5a) — admin/raw-edited
+   files bypass the writer cap.
+3. **Cross-repo marker contract (both, P3) → DOCUMENTED.** `assertSectionContentWritable` (openclaw)
+   and `containsAppMarker` (dashboard) now carry matching notes that the `content.includes("<!-- app:")`
+   rule must change on both sides together.
+
+Phase-1 PRs: openclaw [#65](https://github.com/cryptolir/openclaw/pull/65) (writer hardening),
+openclaw-dashboard [#121](https://github.com/cryptolir/openclaw-dashboard/pull/121) (reader allowlist
++ format). The pre-existing `resolveUserFilePath` test failures in the dashboard suite are unrelated
+(verified on unmodified `origin/main`) and tracked separately.
