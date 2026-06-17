@@ -533,6 +533,41 @@ export function buildWorkspaceSkillsPrompt(
     .join("\n");
 }
 
+/** Minimal XML escape matching pi `formatSkillsForPrompt` for app-prompt values. */
+function escapeSkillXml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}
+
+/**
+ * App-session variant of the `<available_skills>` block: lists each skill's
+ * `<name>` and `<description>` but NOT its on-disk `<location>`. App-user sessions
+ * run jailed (`tools.fs.workspaceOnly`) and cannot `read` the shared `SKILL.md` by
+ * path, so they load skills by name via the `load_skill` tool — and the absolute
+ * host path must not leak into the prompt. Build this from the SAME filtered
+ * `resolvedSkills` used to seed `load_skill`, so the visible list and the tool
+ * allowlist cannot drift (codex 4517821566 #2). Same shape as
+ * `formatSkillsForPrompt` minus `<location>`.
+ */
+export function buildAppSkillsPrompt(skills: Skill[]): string {
+  if (skills.length === 0) {
+    return "";
+  }
+  const lines: string[] = ["<available_skills>"];
+  for (const skill of skills) {
+    lines.push("  <skill>");
+    lines.push(`    <name>${escapeSkillXml(skill.name)}</name>`);
+    lines.push(`    <description>${escapeSkillXml(skill.description)}</description>`);
+    lines.push("  </skill>");
+  }
+  lines.push("</available_skills>");
+  return lines.join("\n");
+}
+
 export function resolveSkillsPromptForRun(params: {
   skillsSnapshot?: SkillSnapshot;
   entries?: SkillEntry[];

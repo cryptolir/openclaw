@@ -24,6 +24,7 @@ export type {
   SkillsInstallPreferences,
 } from "./skills/types.js";
 export {
+  buildAppSkillsPrompt,
   buildWorkspaceSkillSnapshot,
   buildWorkspaceSkillsPrompt,
   buildWorkspaceSkillCommandSpecs,
