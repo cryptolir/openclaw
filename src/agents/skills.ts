@@ -29,6 +29,7 @@ export {
   buildWorkspaceSkillsPrompt,
   buildWorkspaceSkillCommandSpecs,
   filterWorkspaceSkillEntries,
+  limitAppSkills,
   loadWorkspaceSkillEntries,
   resolveSkillsPromptForRun,
   syncSkillsToWorkspace,

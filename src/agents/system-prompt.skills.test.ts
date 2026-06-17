@@ -1,6 +1,6 @@
 import type { Skill } from "@mariozechner/pi-coding-agent";
 import { describe, expect, it } from "vitest";
-import { buildAppSkillsPrompt } from "./skills.js";
+import { buildAppSkillsPrompt, limitAppSkills } from "./skills.js";
 import { buildSkillsSection } from "./system-prompt.js";
 
 const SKILLS_PROMPT =
@@ -65,5 +65,26 @@ describe("buildAppSkillsPrompt", () => {
 
   it("returns an empty string when there are no skills", () => {
     expect(buildAppSkillsPrompt([])).toBe("");
+  });
+});
+
+describe("limitAppSkills", () => {
+  const sk = (i: number): Skill =>
+    ({
+      name: `skill-${i}`,
+      description: "d",
+      filePath: `/p/${i}`,
+      baseDir: "/p",
+    }) as unknown as Skill;
+
+  it("caps the set to the configured prompt limit (default 150) and keeps the prefix", () => {
+    const many = Array.from({ length: 200 }, (_, i) => sk(i));
+    const limited = limitAppSkills(many);
+    expect(limited).toHaveLength(150);
+    expect(limited[0]?.name).toBe("skill-0");
+  });
+
+  it("returns a small set unchanged", () => {
+    expect(limitAppSkills([sk(1), sk(2)])).toHaveLength(2);
   });
 });

@@ -568,6 +568,17 @@ export function buildAppSkillsPrompt(skills: Skill[]): string {
   return lines.join("\n");
 }
 
+/**
+ * Apply the configured prompt limits (`maxSkillsInPrompt` + char cap) to a skill
+ * set, returning the exact subset the normal prompt would render. The app skills
+ * prompt and the `load_skill` allowlist are both built from this, so an app session
+ * can neither see nor load more skills than a normal session's prompt shows
+ * (codex 4519976882 #3).
+ */
+export function limitAppSkills(skills: Skill[], config?: OpenClawConfig): Skill[] {
+  return applySkillsPromptLimits({ skills, config }).skillsForPrompt;
+}
+
 export function resolveSkillsPromptForRun(params: {
   skillsSnapshot?: SkillSnapshot;
   entries?: SkillEntry[];

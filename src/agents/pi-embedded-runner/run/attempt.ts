@@ -73,6 +73,7 @@ import {
   applySkillEnvOverridesFromSnapshot,
   buildAppSkillsPrompt,
   buildWorkspaceSkillSnapshot,
+  limitAppSkills,
   loadWorkspaceSkillEntries,
   resolveSkillsPromptForRun,
 } from "../../skills.js";
@@ -298,26 +299,22 @@ export async function runEmbeddedAttempt(
     const appUserId = isAppUserSession(params.sessionKey)
       ? (resolveAppUserId(params.sessionKey) ?? appUserIdFromSessionKey(params.sessionKey))
       : null;
-    // Filtered, prompt-visible skills (the snapshot's resolvedSkills) — the SINGLE
-    // source for both the app skills prompt and the load_skill allowlist, so they
-    // cannot drift (codex 4517821566 #2).
+    // Filtered + prompt-limited skills (the SAME subset the normal prompt renders):
+    // the single source for both the app skills prompt and the load_skill allowlist,
+    // so they cannot drift (codex 4517821566 #2) and never exceed the configured
+    // prompt limits (codex 4519976882 #3). The skills PROMPT is built after tools
+    // (below) so it reflects whether load_skill survived tool-policy filtering.
     const appSkills = appUserId
-      ? (params.skillsSnapshot?.resolvedSkills ??
-        buildWorkspaceSkillSnapshot(effectiveWorkspace, {
-          entries: skillEntries,
-          config: params.config,
-        }).resolvedSkills ??
-        [])
+      ? limitAppSkills(
+          params.skillsSnapshot?.resolvedSkills ??
+            buildWorkspaceSkillSnapshot(effectiveWorkspace, {
+              entries: skillEntries,
+              config: params.config,
+            }).resolvedSkills ??
+            [],
+          params.config,
+        )
       : undefined;
-
-    const skillsPrompt = appUserId
-      ? buildAppSkillsPrompt(appSkills ?? [])
-      : resolveSkillsPromptForRun({
-          skillsSnapshot: params.skillsSnapshot,
-          entries: shouldLoadSkillEntries ? skillEntries : undefined,
-          config: params.config,
-          workspaceDir: effectiveWorkspace,
-        });
 
     const sessionLabel = params.sessionKey ?? params.sessionId;
     const { bootstrapFiles: hookAdjustedBootstrapFiles, contextFiles } =
@@ -382,6 +379,22 @@ export async function runEmbeddedAttempt(
         });
     const tools = sanitizeToolsForGoogle({ tools: toolsRaw, provider: params.provider });
     logToolSchemasForGoogle({ tools, provider: params.provider });
+
+    // The app skills prompt + load-by-name instruction must only appear when
+    // load_skill actually survived tool-policy filtering, or the model is told to
+    // call a tool it doesn't have (codex 4519976882 #1). When it was filtered out,
+    // suppress the (otherwise unusable) skills section for the jailed app session.
+    const appSkillLoad = appUserId != null && tools.some((tool) => tool.name === "load_skill");
+    const skillsPrompt = appUserId
+      ? appSkillLoad
+        ? buildAppSkillsPrompt(appSkills ?? [])
+        : ""
+      : resolveSkillsPromptForRun({
+          skillsSnapshot: params.skillsSnapshot,
+          entries: shouldLoadSkillEntries ? skillEntries : undefined,
+          config: params.config,
+          workspaceDir: effectiveWorkspace,
+        });
 
     const machineName = await getMachineDisplayName();
     const runtimeChannel = normalizeMessageChannel(params.messageChannel ?? params.messageProvider);
@@ -498,7 +511,7 @@ export async function runEmbeddedAttempt(
         ? resolveHeartbeatPrompt(params.config?.agents?.defaults?.heartbeat?.prompt)
         : undefined,
       skillsPrompt,
-      appSkillLoad: !!appUserId,
+      appSkillLoad,
       docsPath: docsPath ?? undefined,
       ttsHint,
       workspaceNotes,
