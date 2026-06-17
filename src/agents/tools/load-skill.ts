@@ -11,12 +11,13 @@ import { jsonResult, readStringParam } from "./common.js";
  *
  * App-user sessions run jailed (`tools.fs.workspaceOnly`), so they cannot `read`
  * a shared `workspace/skills/<name>/SKILL.md` by path even though that skill is
- * listed in their prompt. This tool resolves a skill NAME — from the SAME
- * filtered, prompt-visible set the model is shown (`SkillSnapshot.resolvedSkills`)
- * — to its `SKILL.md` content, read server-side (the gateway process is not
- * jailed). The model never supplies a path, so there is no traversal surface, and
- * the allowlist is exactly the visible set, so it is never a side channel to
- * filtered / `disableModelInvocation` / out-of-prompt skills.
+ * listed in their prompt. This tool resolves a skill NAME — from the SAME set the
+ * model is shown: the prompt-LIMITED subset of `SkillSnapshot.resolvedSkills` (after
+ * `limitAppSkills` applies the `maxSkillsInPrompt` / char caps) — to its `SKILL.md`
+ * content, read server-side (the gateway process is not jailed). The model never
+ * supplies a path, so there is no traversal surface, and the allowlist is exactly
+ * the visible set, so it is never a side channel to filtered /
+ * `disableModelInvocation` / out-of-prompt / over-limit skills.
  *
  * Plan: docs/experiments/plans/app-user-skill-access.md (Option A); codex review
  * 4517821566.
@@ -97,8 +98,9 @@ const LoadSkillSchema = Type.Object({
 });
 
 /**
- * Build the `load_skill` tool from the app session's allowlist (the snapshot's
- * filtered `resolvedSkills`). Returns null when there is no allowlist — non-app
+ * Build the `load_skill` tool from the app session's allowlist — the prompt-limited
+ * subset of the snapshot's `resolvedSkills` (via `limitAppSkills`). Returns null
+ * when there is no allowlist — non-app
  * sessions never pass `skills` (the gating, including the resolved-app-user check,
  * lives at the call site in `attempt.ts`). Read-only.
  */

@@ -180,9 +180,10 @@ export function createOpenClawCodingTools(options?: {
    */
   userFileDir?: string;
   /**
-   * Filtered, prompt-visible skills for an app-user session — threaded to
-   * `createOpenClawTools` to enable the read-only `load_skill` tool. Set only by
-   * the embedded run path for sessions with a resolved app user.
+   * Prompt-limited, filtered skills (the `limitAppSkills` subset of `resolvedSkills`)
+   * for an app-user session — threaded to `createOpenClawTools` to enable the
+   * read-only `load_skill` tool. Set only by the embedded run path for sessions with
+   * a resolved app user.
    */
   appSkills?: Skill[];
   config?: OpenClawConfig;

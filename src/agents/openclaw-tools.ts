@@ -72,9 +72,10 @@ export function createOpenClawTools(options?: {
   /** Whether the requesting sender is an owner. */
   senderIsOwner?: boolean;
   /**
-   * Filtered, prompt-visible skills (the snapshot's `resolvedSkills`) for an
-   * app-user session — enables the read-only `load_skill` tool. Only set by the
-   * embedded run path for sessions with a resolved app user; omitted otherwise.
+   * Prompt-limited, filtered skills (the `limitAppSkills` subset of the snapshot's
+   * `resolvedSkills`) for an app-user session — enables the read-only `load_skill`
+   * tool. Only set by the embedded run path for sessions with a resolved app user;
+   * omitted otherwise.
    */
   appSkills?: Skill[];
 }): AnyAgentTool[] {
