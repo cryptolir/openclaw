@@ -14,7 +14,7 @@ describe("Qianfan provider", () => {
     try {
       const providers = await resolveImplicitProviders({ agentDir });
       expect(providers?.qianfan).toBeDefined();
-      expect(providers?.qianfan?.apiKey).toBe("QIANFAN_API_KEY");
+      expect(providers?.qianfan?.apiKey).toBe("${QIANFAN_API_KEY}");
     } finally {
       envSnapshot.restore();
     }

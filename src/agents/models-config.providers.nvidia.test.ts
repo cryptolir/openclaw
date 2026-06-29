@@ -97,7 +97,7 @@ describe("vLLM provider", () => {
       const providers = await resolveImplicitProviders({ agentDir });
 
       expect(providers?.vllm).toBeDefined();
-      expect(providers?.vllm?.apiKey).toBe("VLLM_API_KEY");
+      expect(providers?.vllm?.apiKey).toBe("${VLLM_API_KEY}");
       expect(providers?.vllm?.baseUrl).toBe("http://127.0.0.1:8000/v1");
       expect(providers?.vllm?.api).toBe("openai-completions");
 

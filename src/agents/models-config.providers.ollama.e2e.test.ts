@@ -40,7 +40,7 @@ describe("Ollama provider", () => {
       const providers = await resolveImplicitProviders({ agentDir });
 
       expect(providers?.ollama).toBeDefined();
-      expect(providers?.ollama?.apiKey).toBe("OLLAMA_API_KEY");
+      expect(providers?.ollama?.apiKey).toBe("${OLLAMA_API_KEY}");
       expect(providers?.ollama?.api).toBe("ollama");
       expect(providers?.ollama?.baseUrl).toBe("http://127.0.0.1:11434");
     } finally {
