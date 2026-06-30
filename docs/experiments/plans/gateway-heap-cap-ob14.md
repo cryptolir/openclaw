@@ -70,7 +70,7 @@ host swap / free-memory trend stabilizes over ~24 h.
 
 EU is OOM-thin now (~160 MiB free). One-at-a-time `docker restart` of the
 longest-up EU gateways frees each one's RAM **and** its swap (OB-9 technique,
-~30 s blip each). **Not** `swapoff` (swapped > available → would OOM). Keep this
+~30 s blip each). **Not** `swapoff` (swapped exceeds available → would OOM). Keep this
 separate from the compose change so the two can be reasoned about independently.
 
 ## Escape hatch
