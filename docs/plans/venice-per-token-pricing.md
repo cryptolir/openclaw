@@ -293,6 +293,24 @@ successful API discovery is cost-authoritative"):
   `refreshVeniceCosts` skips authoritative entries without a `cost` field
   (never writes `cost: undefined`).
 
+### Impl review round 1 (Codex, 2026-07-10): id-based reconcile
+
+Two P2s on the implementation PR, folded as one mechanism change — the cache
+guard's count-based early-return became a fully **id-based reconcile**
+(`reconcileVeniceModels`), and the guard now always keeps the **new provider
+object** (fresh `apiKey`/`baseUrl`/compat), only swapping in the reconciled
+model list:
+
+- count comparisons are gone: even when the API returns _more_ models overall,
+  an id it omitted keeps its cached cost (the explicit catalog zero for that id
+  cannot clobber it);
+- preserved-cache paths no longer discard current provider metadata (the old
+  `delete providers.venice` kept a stale cached provider object wholesale).
+
+Named tests: "explicit-only ids never zero cached prices — authority is
+id-based, not count-based", "cached-only ids are appended", "fallback/no
+discovery never clobbers cached costs and fills new ids".
+
 ## Trust-boundary impact (dashboard spend caps)
 
 `openclaw-dashboard` `snapshotAllWorkspaces` feeds

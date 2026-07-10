@@ -11,8 +11,8 @@ import {
   resolveImplicitProviders,
 } from "./models-config.providers.js";
 import {
+  reconcileVeniceModels,
   refreshVeniceCosts,
-  resolveVeniceCachePreservation,
   type VeniceDiscoverySource,
 } from "./venice-models.js";
 
@@ -142,35 +142,30 @@ export async function ensureOpenClawModelsJson(
         NonNullable<ModelsConfig["providers"]>[string]
       >;
 
-      // Preserve cached Venice models per the source-aware rules in
-      // docs/plans/venice-per-token-pricing.md §Design 3 (Rev 5): only a
-      // successful API discovery is cost-authoritative, and only via the raw
-      // list it returned (never merged/explicit entries — the zero-cost
-      // onboard catalog must not clobber cached prices). Fallback results and
-      // runs where no Venice discovery happened never touch cached costs; new
-      // ids the cache lacks are appended in every preserved case.
+      // Reconcile the Venice model list per docs/plans/venice-per-token-pricing.md
+      // §Design 3 (Rev 5 + impl notes): authority is id-based — only ids the raw
+      // API discovery returned carry API cost authority; every other id keeps
+      // its cached cost when one exists, and cached-only ids are appended. The
+      // NEW provider object always wins (apiKey/baseUrl/compat stay fresh);
+      // only the model list is reconciled.
       const existingVenice = existingProviders.venice;
       const newVenice = providers.venice;
       if (existingVenice && newVenice) {
-        const existingModels = Array.isArray(existingVenice.models) ? existingVenice.models : [];
+        const cachedModels = Array.isArray(existingVenice.models) ? existingVenice.models : [];
         const newModels = Array.isArray(newVenice.models) ? newVenice.models : [];
         const implicitVenice = implicitProviders?.venice;
         const apiModels =
           veniceSource === "api" && Array.isArray(implicitVenice?.models)
             ? implicitVenice.models
             : [];
-        const preservation = resolveVeniceCachePreservation({
-          existingModels,
-          newModels,
-          apiModels,
-          source: veniceSource,
-        });
-        if (preservation) {
-          console.warn(
-            `[venice-models] Preserving ${existingModels.length} cached models (${preservation.reason})`,
-          );
-          existingProviders.venice = { ...existingVenice, models: preservation.models };
-          delete providers.venice;
+        if (cachedModels.length > 0 && newModels.length > 0) {
+          const reconciled = reconcileVeniceModels({ cachedModels, newModels, apiModels });
+          if (reconciled.restoredCostCount > 0 || reconciled.preservedIdCount > 0) {
+            console.warn(
+              `[venice-models] Reconciled with cache: restored ${reconciled.restoredCostCount} cached cost(s), preserved ${reconciled.preservedIdCount} cached-only model(s)`,
+            );
+          }
+          providers.venice = { ...newVenice, models: reconciled.models };
         }
       }
 

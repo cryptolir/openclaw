@@ -3,7 +3,7 @@ import {
   buildVeniceModelDefinition,
   discoverVeniceModels,
   refreshVeniceCosts,
-  resolveVeniceCachePreservation,
+  reconcileVeniceModels,
   veniceCostFromPricing,
   VENICE_MODEL_CATALOG,
 } from "./venice-models.js";
@@ -211,91 +211,84 @@ describe("refreshVeniceCosts", () => {
   });
 });
 
-describe("resolveVeniceCachePreservation", () => {
+describe("reconcileVeniceModels", () => {
   const model = (id: string, input: number) => ({
     id,
     cost: { input, output: 0, cacheRead: 0, cacheWrite: 0 },
   });
 
-  it("fallback never clobbers a non-empty cache and fills missing ids (zero-cost)", () => {
-    const cached = [model("a", 6), model("b", 3)];
-    const preservation = resolveVeniceCachePreservation({
-      existingModels: cached,
-      newModels: [model("a", 0), model("b", 0), model("c", 0)],
-      source: "fallback",
+  it("API-returned ids keep their new (API-priced) entry — even a fail-closed zero", () => {
+    const { models } = reconcileVeniceModels({
+      cachedModels: [model("a", 6)],
+      newModels: [model("a", 0)],
+      apiModels: [model("a", 0)],
     });
-    expect(preservation).not.toBeNull();
-    // cached prices survive the outage; the fallback-only id is appended
-    expect(preservation?.models.map((m) => [m.id, m.cost.input])).toEqual([
+    expect(models.map((m) => [m.id, m.cost.input])).toEqual([["a", 0]]);
+  });
+
+  it("explicit-only ids never zero cached prices — authority is id-based, not count-based", () => {
+    // Codex impl-round 1: API returned MORE models overall but omitted b;
+    // the explicit catalog zero for b must not clobber b's cached price.
+    const { models, restoredCostCount } = reconcileVeniceModels({
+      cachedModels: [model("a", 6), model("b", 3)],
+      newModels: [model("a", 9), model("b", 0), model("x", 2), model("y", 4)],
+      apiModels: [model("a", 9), model("x", 2), model("y", 4)],
+    });
+    expect(restoredCostCount).toBe(1);
+    expect(models.map((m) => [m.id, m.cost.input])).toEqual([
+      ["a", 9],
+      ["b", 3],
+      ["x", 2],
+      ["y", 4],
+    ]);
+  });
+
+  it("fallback/no-discovery (empty apiModels) never clobbers cached costs and fills new ids", () => {
+    const { models } = reconcileVeniceModels({
+      cachedModels: [model("a", 6), model("b", 3)],
+      newModels: [model("a", 0), model("b", 0), model("c", 0)],
+      apiModels: [],
+    });
+    expect(models.map((m) => [m.id, m.cost.input])).toEqual([
       ["a", 6],
       ["b", 3],
       ["c", 0],
     ]);
   });
 
-  it("fallback with an empty cache returns null (fresh write)", () => {
-    const preservation = resolveVeniceCachePreservation({
-      existingModels: [],
-      newModels: [model("a", 0)],
-      source: "fallback",
-    });
-    expect(preservation).toBeNull();
-  });
-
-  it("api with fewer models preserves the cache but refreshes costs from the raw API list", () => {
-    const preservation = resolveVeniceCachePreservation({
-      existingModels: [model("a", 1), model("b", 3)],
+  it("cached-only ids are appended (delisted models stay usable at last-known price)", () => {
+    const { models, preservedIdCount } = reconcileVeniceModels({
+      cachedModels: [model("a", 6), model("gone", 1)],
       newModels: [model("a", 9)],
       apiModels: [model("a", 9)],
-      source: "api",
     });
-    expect(preservation).not.toBeNull();
-    expect(preservation?.models.map((m) => [m.id, m.cost.input])).toEqual([
+    expect(preservedIdCount).toBe(1);
+    expect(models.map((m) => [m.id, m.cost.input])).toEqual([
       ["a", 9],
-      ["b", 3],
+      ["gone", 1],
     ]);
   });
 
-  it("explicit-only ids never zero cached prices — only the raw API list is authoritative", () => {
-    // verify-workflow blocker: cache {A:6,B:3,C:1}; API returned only A;
-    // merged list carries the explicit onboard-catalog zero for B. B and C
-    // must keep their last-known-good prices.
-    const preservation = resolveVeniceCachePreservation({
-      existingModels: [model("a", 6), model("b", 3), model("c", 1)],
-      newModels: [model("a", 9), model("b", 0)],
-      apiModels: [model("a", 9)],
-      source: "api",
+  it("a cached entry without a cost cannot restore anything (no cost: undefined writes)", () => {
+    const costless: Array<{ id: string; cost?: ReturnType<typeof model>["cost"] }> = [{ id: "a" }];
+    const { models, restoredCostCount } = reconcileVeniceModels({
+      cachedModels: costless,
+      newModels: [model("a", 0)],
+      apiModels: [],
     });
-    expect(preservation).not.toBeNull();
-    expect(preservation?.models.map((m) => [m.id, m.cost.input])).toEqual([
-      ["a", 9],
-      ["b", 3],
-      ["c", 1],
-    ]);
+    expect(restoredCostCount).toBe(0);
+    expect(models[0]?.cost).toEqual({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
   });
 
-  it("no discovery (source undefined) never refreshes costs, only fills new ids", () => {
-    // verify-workflow blocker: explicit-only run (no Venice key) must not let
-    // the zero-cost onboard catalog rewrite cached real prices.
-    const preservation = resolveVeniceCachePreservation({
-      existingModels: [model("a", 6)],
-      newModels: [model("a", 0), model("b", 0)],
-      source: undefined,
+  it("empty cache passes the new list through unchanged", () => {
+    const { models, restoredCostCount, preservedIdCount } = reconcileVeniceModels({
+      cachedModels: [],
+      newModels: [model("a", 5)],
+      apiModels: [],
     });
-    expect(preservation).not.toBeNull();
-    expect(preservation?.models.map((m) => [m.id, m.cost.input])).toEqual([
-      ["a", 6],
-      ["b", 0],
-    ]);
-  });
-
-  it("api with same-or-more models returns null (discovery replaces the cache)", () => {
-    const preservation = resolveVeniceCachePreservation({
-      existingModels: [model("a", 1)],
-      newModels: [model("a", 9), model("b", 2)],
-      source: "api",
-    });
-    expect(preservation).toBeNull();
+    expect(models.map((m) => [m.id, m.cost.input])).toEqual([["a", 5]]);
+    expect(restoredCostCount).toBe(0);
+    expect(preservedIdCount).toBe(0);
   });
 });
 

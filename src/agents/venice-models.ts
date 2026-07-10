@@ -727,46 +727,61 @@ export function refreshVeniceCosts<T extends { id?: unknown; cost?: unknown }>(
 }
 
 /**
- * Decide whether a cached Venice provider (models.json) survives a new
- * provider set (plan §Design 3, Rev 5). Returns the models to preserve, or
- * null when the new set should simply replace the cache:
- * - only a successful "api" discovery is cost-authoritative, and only via the
- *   raw `apiModels` list it returned — never merged/explicit entries (the
- *   zero-cost onboard catalog must not clobber last-known-good prices);
- * - a "fallback" result — or a run where no Venice discovery happened at all
- *   (`source` undefined) — never replaces a non-empty cache and never touches
- *   costs; in every preserved case, new ids the cache lacks are appended
- *   (fill semantics), so a new catalog/config model still lands.
+ * Reconcile the Venice model list that will be written to models.json against
+ * the cached list (plan §Design 3, Rev 5 + impl notes). Authority is id-based,
+ * never count-based:
+ * - ids the raw API discovery returned keep their (already API-priced) new
+ *   entry — the only cost-authoritative source;
+ * - ids the API did NOT return keep the new entry's fields but restore the
+ *   cached cost when one exists (the zero-cost onboard catalog or fallback
+ *   must never clobber a last-known-good price);
+ * - cached ids missing from the new list entirely are appended (delisted
+ *   models stay usable at their last-known price).
+ * The caller keeps the NEW provider object (apiKey/baseUrl stay fresh) and
+ * only swaps in the reconciled model list.
  */
-export function resolveVeniceCachePreservation<T extends { id?: unknown; cost?: unknown }>(params: {
-  existingModels: T[];
+export function reconcileVeniceModels<T extends { id?: unknown; cost?: unknown }>(params: {
+  cachedModels: T[];
   newModels: T[];
-  /** Raw API-discovered list — the only cost-authoritative set. Ignored unless source is "api". */
-  apiModels?: T[];
-  source?: VeniceDiscoverySource;
-}): { models: T[]; reason: string } | null {
-  const { existingModels, newModels, source } = params;
-  if (existingModels.length === 0) {
-    return null;
-  }
-  const isApi = source === "api";
-  if (isApi && newModels.length >= existingModels.length) {
-    return null;
-  }
-  const apiModels = isApi ? (params.apiModels ?? []) : [];
-  const refreshed =
-    apiModels.length > 0 ? refreshVeniceCosts(existingModels, apiModels) : existingModels;
-  const existingIds = new Set(existingModels.map(modelId).filter(Boolean));
-  const fill = newModels.filter((model) => {
+  /** Raw API-discovered list — the only cost-authoritative set. Empty when discovery fell back or never ran. */
+  apiModels?: Array<{ id?: unknown; cost?: unknown }>;
+}): { models: T[]; restoredCostCount: number; preservedIdCount: number } {
+  const { cachedModels, newModels } = params;
+  const apiIds = new Set((params.apiModels ?? []).map(modelId).filter(Boolean));
+  const cacheById = new Map<string, T>();
+  for (const model of cachedModels) {
     const id = modelId(model);
-    return id.length > 0 && !existingIds.has(id);
+    if (id) {
+      cacheById.set(id, model);
+    }
+  }
+  let restoredCostCount = 0;
+  const newIds = new Set<string>();
+  const reconciled = newModels.map((model) => {
+    const id = modelId(model);
+    if (!id) {
+      return model;
+    }
+    newIds.add(id);
+    if (apiIds.has(id)) {
+      return model;
+    }
+    const cached = cacheById.get(id);
+    if (cached && cached.cost !== undefined) {
+      restoredCostCount += 1;
+      return { ...model, cost: cached.cost };
+    }
+    return model;
   });
-  const reason = isApi
-    ? `discovery returned only ${newModels.length}; costs refreshed from API`
-    : source === "fallback"
-      ? "discovery fell back to the static catalog"
-      : "no Venice discovery ran";
-  return { models: [...refreshed, ...fill], reason };
+  const kept = cachedModels.filter((model) => {
+    const id = modelId(model);
+    return id.length > 0 && !newIds.has(id);
+  });
+  return {
+    models: [...reconciled, ...kept],
+    restoredCostCount,
+    preservedIdCount: kept.length,
+  };
 }
 
 // Venice API response types
