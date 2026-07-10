@@ -1,9 +1,22 @@
-# Venice per-token pricing — make the usage/billing report see Venice spend
+# Venice per-token pricing: make the usage/billing report see Venice spend
 
-**Status:** Rev 2 — folds Codex round 1
+**Status:** Rev 3 — folds Codex round 2 (doc hygiene)
 **Repo:** `cryptolir/openclaw` (gateway). No dashboard code changes in this plan.
 
-### Rev 2 — Codex round 1 (2026-07-10)
+### Rev 3: Codex round 2 (2026-07-10)
+
+Round 2 raised **no** correctness/trust-boundary findings — the Rev 2 pricing
+design (cost-aware merge, fail-closed cache) stands. Two doc-hygiene folds:
+
+- **P2 — redact live identifiers.** `docs/` is public repo content (`AGENTS.md`:
+  no live config values). Replaced the workspace id, gateway/agent names, and
+  customer name with role-based descriptions throughout. (The evidence numbers
+  are kept; only identifiers are scrubbed. Rev 1–2 history still contains the
+  id — an opaque Firestore id, not a credential — so no history rewrite.)
+- **P3 — em-dash headings** break Mintlify anchors (`AGENTS.md` Docs Linking).
+  All headings now use colons.
+
+### Rev 2: Codex round 1 (2026-07-10)
 
 Three findings, all valid, all folded:
 
@@ -28,8 +41,8 @@ see §Design 3.
 ## Problem (verified live, 2026-07-10)
 
 Every Venice model is defined with `cost: 0`, so the gateway prices all Venice
-inference at $0.00. Verified against the live `life` gateway ("Havaya.me",
-workspace `NCVKknvHNnpNYjkUaMdH`) via its `usage.report` RPC, 7-day window:
+inference at $0.00. Verified against a live Venice-primary gateway (the flagship
+consumer-app agent) via its `usage.report` RPC, 7-day window:
 
 | model                    | tokens    | reported cost |
 | ------------------------ | --------- | ------------- |
@@ -154,7 +167,7 @@ export function veniceCostFromPricing(pricing?: VenicePricing): ModelCost {
   at line 7 is updated to say pricing comes from the API and zero means
   "unpriced".
 
-### 3. Cost-aware merge — resolves P1 (explicit path) + P2 (stale cache)
+### 3. Cost-aware merge: resolves P1 (explicit path) + P2 (stale cache)
 
 The explicit onboard catalog (source c) and any larger stale cache both write
 **zero-cost** Venice entries that `mergeProviderModels` lets win over priced
@@ -197,7 +210,7 @@ provider, a same-id model with real pricing overrides a zero-cost entry's
 free **$5/mo**, builder **$100/mo**, scale/enterprise unlimited. Turning
 pricing on makes these caps real for Venice workspaces for the first time.
 
-- Measured: tal croll (builder) ≈ **$48/mo** at new prices (1.14M input×$6 +
+- Measured: the busiest builder-plan Venice workspace ≈ **$48/mo** at new prices (1.14M input×$6 +
   68k output×$30 + 3.9M cacheRead×$0.6 per week) → safely under $100.
 - Risk: any Venice-primary **free** workspace burns its $5 cap fast →
   auto-suspend that reads as an outage.
@@ -261,9 +274,9 @@ pricing on makes these caps real for Venice workspaces for the first time.
 1. This plan PR → Codex adversarial review → fold revs → approve.
 2. Impl PR: `venice-models.ts` + tests. Gate: vitest + typecheck + build.
 3. Pre-rollout audit (ops step above); owner ack if any workspace > 80% cap.
-4. Standard gateway image release; pin to `life` first, verify via a 1-turn
-   smoke + `usage.report` probe (new turn shows `venice/... cost > 0`), then
-   fleet roll.
+4. Standard gateway image release; pin to the flagship Venice agent first,
+   verify via a 1-turn smoke + `usage.report` probe (new turn shows
+   `venice/... cost > 0`), then fleet roll.
 
 ## Risks
 
@@ -275,6 +288,6 @@ pricing on makes these caps real for Venice workspaces for the first time.
 - **Venice reprices models:** costs update on every successful discovery, so
   they track the API automatically; between discoveries they can be briefly
   stale. Accepted for operator-visibility purposes.
-- **`claude-opus-4-7-fast` is $36/$180 per M** — one EU agent (`onlyclaw`)
-  runs it as primary. The audit in step 3 will price it precisely; expect this
+- **`claude-opus-4-7-fast` is $36/$180 per M** — one EU agent runs it as
+  primary. The audit in step 3 will price it precisely; expect this
   to be the workspace most likely to need an owner decision.
