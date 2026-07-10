@@ -1,7 +1,24 @@
 # Venice per-token pricing: make the usage/billing report see Venice spend
 
-**Status:** Rev 3 — folds Codex round 2 (doc hygiene)
+**Status:** Rev 4 — folds Codex round 3
 **Repo:** `cryptolir/openclaw` (gateway). No dashboard code changes in this plan.
+
+### Rev 4: Codex round 3 (2026-07-10)
+
+Two P2 findings, both folded:
+
+- **Discovered cost must win even when zero** — the Rev 2 cost-aware-merge rule
+  ("take implicit only if explicit is all-zero AND implicit nonzero") let a
+  stale **nonzero** cached price survive a fail-closed discovered zero. Rewrote
+  §Design 3 to the simpler correct principle: the latest successful discovery is
+  authoritative for the `cost` of every id it returns, replacing older
+  cost unconditionally (zero included).
+- **Context-tiered pricing** — Venice publishes higher `>256K` context tiers for
+  some model ids; a single flat `cost` under-reports large-context turns. Sized
+  it: **no current fleet primary is tiered** — only `qwen-3-6-plus` (unused)
+  carries an `extended` tier. Folded as base-tier pricing + a warn that flags
+  any model exposing a tier structure; accurate per-request tiered costing is
+  deferred (pi-ai `calculateCost` is flat) — see §Design 4 and NOT-building.
 
 ### Rev 3: Codex round 2 (2026-07-10)
 
@@ -171,28 +188,55 @@ export function veniceCostFromPricing(pricing?: VenicePricing): ModelCost {
 
 The explicit onboard catalog (source c) and any larger stale cache both write
 **zero-cost** Venice entries that `mergeProviderModels` lets win over priced
-discovery for the same id. One mechanism fixes both: **when merging the Venice
-provider, a same-id model with real pricing overrides a zero-cost entry's
-`cost`.**
+discovery for the same id. One principle fixes both:
 
-- Scope the change to `mergeProviderModels` **for the `venice` provider only**
-  (or a small pre-merge normalize step keyed on provider id) — do not change
-  generic merge semantics for other providers (invariant 3: only `cost`, only
-  Venice).
-- Rule: for each id present in both explicit and implicit, if the explicit
-  entry's `cost` is all-zero and the implicit entry's `cost` is nonzero, take
-  the implicit `cost` (keep everything else — id, aliases, contextWindow — from
-  the explicit entry). Symmetric for the stale-cache merge in
-  `ensureAgentModelsJson` (the `models-config.ts:~123` guard): preserving cached
-  entries is fine, but a matching priced discovery must refresh their `cost`.
+> **A successful discovery is authoritative for the `cost` of every id it
+> covers.** The discovered `cost` replaces the explicit/cached `cost`
+> **unconditionally — including when the discovered cost is zero.** Older
+> sources (onboard catalog, on-disk cache) only _fill in_ ids the latest
+> discovery did not return.
+
+- **Rev 3 fix (Codex round 2, P2):** the Rev 2 rule ("take implicit only if
+  explicit is all-zero **and** implicit is nonzero") had a hole — if Venice
+  omits/malforms a returned model's pricing, `veniceCostFromPricing` fails
+  closed to zero, but a stale **nonzero** cached cost would survive and keep
+  over-reporting (violating invariant 2). Dropping the conditional closes it: a
+  discovered zero is a deliberate fail-closed signal and must win over a stale
+  nonzero. Discovery is the single source of truth for prices of ids it returns.
+- Scope the change to the **`venice` provider only** — in `mergeProviderModels`
+  (explicit-vs-implicit) and the stale-cache guard in `ensureAgentModelsJson`
+  (`models-config.ts:~123`, cached-vs-new). Do not touch generic merge semantics
+  for other providers (invariant 3: only `cost`, only Venice). Keep everything
+  else (id, aliases, contextWindow) from the retained entry; only `cost` is
+  overwritten from discovery.
 - This keeps discovery as the single price source and needs no hand-maintained
-  prices. If discovery hasn't run yet (fresh onboard, API down), entries stay
-  zero-cost + the existing warn until the next successful discovery — fail-open
-  to $0 visibility, never a wrong price.
+  prices. If discovery has never succeeded (fresh onboard, API down), entries
+  stay zero-cost + warn until the first good discovery — fail-open to $0
+  visibility, never a wrong price.
 - **`applyVeniceProviderConfig` itself is left writing the catalog** (it has no
   API data at onboard time); the merge is where price wins. Alternative
   considered and rejected: making the onboard path fetch prices — it runs in CLI
   auth flows without guaranteed network and would duplicate discovery.
+
+### 4. Context tiers — base rate + flag (Codex round 3, P2)
+
+Venice's `model_spec.pricing` can carry higher-context tiers (e.g.
+`qwen-3-6-plus` has `pricing.extended` with `context_token_threshold: 256000`
+at ~2× the base rate). pi-ai's `calculateCost` uses one flat `model.cost` per
+model and has no per-request context-size input, so true tiered costing is a
+larger change than this plan.
+
+- `veniceCostFromPricing` reads **only the base-tier** `input/output/cache_*`
+  (the top-level `usd` fields), which is what it already does.
+- **Detect and flag:** if a model's `pricing` contains any tier object (a value
+  with a `context_token_threshold`), emit a `console.warn` naming the model and
+  threshold, so the under-reporting is visible rather than silent.
+- **Bound:** base-tier under-reports only for turns whose context exceeds the
+  threshold, and only by the base-vs-tier delta. Verified live (2026-07-10): of
+  the fleet's current Venice primaries (`qwen3-5-9b`, `claude-opus-4-6`,
+  `claude-opus-4-7-fast`, `zai-org-glm-4.7`) **none expose a tier** — impact on
+  today's spend/cap audit is zero; the warn catches it if a tiered model is
+  later adopted.
 
 ### Explicitly relying on (no changes)
 
@@ -254,6 +298,12 @@ pricing on makes these caps real for Venice workspaces for the first time.
   provider with the same collision is **unchanged** (proves scope); the
   stale-cache guard (`ensureAgentModelsJson`, discovery returns fewer models)
   refreshes cost for matching ids.
+- **Rev 3 P2 — discovered-zero wins:** a merge where the cached/explicit entry
+  has a **nonzero** cost and discovery returns the same id with **zero** cost
+  (fail-closed) → merged entry is **zero** (proves stale nonzero can't survive).
+- **Rev 3 P2 — tier flag:** a model whose `pricing` carries a
+  `context_token_threshold` tier → base-tier `cost` mapped + warn emitted naming
+  the model (proves detection); a flat-priced model emits no tier warn.
 - Every hole Codex catches in review becomes a named case here (protocol §4).
 
 ## Deliberately NOT building
@@ -265,6 +315,10 @@ pricing on makes these caps real for Venice workspaces for the first time.
   breakdown-vs-total precedence change. Operator accepts $0 history.
 - **Static catalog prices** (~40 hand-maintained rows that go stale).
 - **DIEM/VCU credit accounting** — `usd` field only.
+- **Accurate per-request context-tier pricing** (Rev 4 / round 3 P2). pi-ai
+  `calculateCost` is flat per model; true tiering needs per-request context-size
+  input. Deferred — base-tier + a warn (§Design 4); no current fleet primary is
+  tiered, so present-day impact is zero.
 - **Dashboard daily-email window fix** (`days:1` = "UTC today so far", shows 0
   for yesterday-active agents) — separate one-line dashboard PR, different repo.
 - **OB-16** (fallback on unresolvable primary) — tracked in bug_list.md.
