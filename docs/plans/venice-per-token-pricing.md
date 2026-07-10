@@ -1,7 +1,24 @@
 # Venice per-token pricing: make the usage/billing report see Venice spend
 
-**Status:** Rev 4 — folds Codex round 3
+**Status:** Rev 5 (final) — folds Codex round 4; owner-approved to implementation
 **Repo:** `cryptolir/openclaw` (gateway). No dashboard code changes in this plan.
+
+### Rev 5: Codex round 4 + owner decision (2026-07-10)
+
+Round 4 hit the protocol's 4-round escalation bound. Owner decision: **fold as
+final rev and move to implementation** (impl PR gets its own adversarial
+review). Both round-4 P2s folded:
+
+- **Fallback must not clobber cached prices.** The static-catalog fallback
+  returns zero-cost models indistinguishable from a successful discovery, so
+  the Rev 4 unconditional-overwrite rule could zero out good cached prices
+  whenever the API is down. Fix: discovery results now carry a **source
+  marker** (`api` vs `fallback`). The §Design 3 cost-overwrite applies **only
+  to `source: "api"`** results; fallback results never replace existing costs —
+  they only fill ids that have no entry yet. New named test.
+- **Impl checklist scope.** Sequencing step 2 now lists
+  `src/agents/models-config.ts` + the merge tests explicitly, alongside
+  `venice-models.ts`.
 
 ### Rev 4: Codex round 3 (2026-07-10)
 
@@ -190,11 +207,18 @@ The explicit onboard catalog (source c) and any larger stale cache both write
 **zero-cost** Venice entries that `mergeProviderModels` lets win over priced
 discovery for the same id. One principle fixes both:
 
-> **A successful discovery is authoritative for the `cost` of every id it
+> **A successful API discovery is authoritative for the `cost` of every id it
 > covers.** The discovered `cost` replaces the explicit/cached `cost`
 > **unconditionally — including when the discovered cost is zero.** Older
 > sources (onboard catalog, on-disk cache) only _fill in_ ids the latest
 > discovery did not return.
+>
+> **Rev 5:** "successful API discovery" is literal — discovery results carry a
+> source marker (`api` | `fallback`). A **fallback** result (static catalog,
+> API unreachable) is NOT authoritative: it never replaces an existing `cost`
+> (zero or nonzero); it only supplies entries for ids with no entry at all.
+> This preserves last-known-good prices across API outages while keeping the
+> fail-closed semantics of a genuine API-returned zero.
 
 - **Rev 3 fix (Codex round 2, P2):** the Rev 2 rule ("take implicit only if
   explicit is all-zero **and** implicit is nonzero") had a hole — if Venice
@@ -299,8 +323,14 @@ pricing on makes these caps real for Venice workspaces for the first time.
   stale-cache guard (`ensureAgentModelsJson`, discovery returns fewer models)
   refreshes cost for matching ids.
 - **Rev 3 P2 — discovered-zero wins:** a merge where the cached/explicit entry
-  has a **nonzero** cost and discovery returns the same id with **zero** cost
-  (fail-closed) → merged entry is **zero** (proves stale nonzero can't survive).
+  has a **nonzero** cost and an **API** discovery returns the same id with
+  **zero** cost (fail-closed) → merged entry is **zero** (proves stale nonzero
+  can't survive a genuine API zero).
+- **Rev 5 P2 — fallback does not clobber:** cached entry has **nonzero** cost
+  and discovery result is `source: "fallback"` (zero-cost catalog) → merged
+  entry **keeps the nonzero cached cost** (proves an API outage can't zero out
+  last-known-good prices); a fallback id with **no** existing entry is added
+  (zero-cost + warn).
 - **Rev 3 P2 — tier flag:** a model whose `pricing` carries a
   `context_token_threshold` tier → base-tier `cost` mapped + warn emitted naming
   the model (proves detection); a flat-priced model emits no tier warn.
@@ -325,8 +355,13 @@ pricing on makes these caps real for Venice workspaces for the first time.
 
 ## Sequencing
 
-1. This plan PR → Codex adversarial review → fold revs → approve.
-2. Impl PR: `venice-models.ts` + tests. Gate: vitest + typecheck + build.
+1. This plan PR → Codex adversarial review → fold revs → approve. (Done:
+   4 rounds + owner decision at the round-4 escalation bound.)
+2. Impl PR (Rev 5 scope): `src/agents/venice-models.ts` (pricing mapping,
+   source marker, tier flag) **and `src/agents/models-config.ts`** (Venice-
+   scoped cost-aware merge in `mergeProviderModels` + the stale-cache guard),
+   plus the full named-test list in §Tests — including the merge tests and the
+   fallback-does-not-clobber test. Gate: vitest + typecheck + build.
 3. Pre-rollout audit (ops step above); owner ack if any workspace > 80% cap.
 4. Standard gateway image release; pin to the flagship Venice agent first,
    verify via a 1-turn smoke + `usage.report` probe (new turn shows
