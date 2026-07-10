@@ -2740,6 +2740,7 @@ public struct ChatSendParams: Codable, Sendable {
     public let attachments: [AnyCodable]?
     public let timeoutms: Int?
     public let idempotencykey: String
+    public let appuserid: String?
 
     public init(
         sessionkey: String,
@@ -2748,7 +2749,8 @@ public struct ChatSendParams: Codable, Sendable {
         deliver: Bool?,
         attachments: [AnyCodable]?,
         timeoutms: Int?,
-        idempotencykey: String
+        idempotencykey: String,
+        appuserid: String?
     ) {
         self.sessionkey = sessionkey
         self.message = message
@@ -2757,6 +2759,7 @@ public struct ChatSendParams: Codable, Sendable {
         self.attachments = attachments
         self.timeoutms = timeoutms
         self.idempotencykey = idempotencykey
+        self.appuserid = appuserid
     }
     private enum CodingKeys: String, CodingKey {
         case sessionkey = "sessionKey"
@@ -2766,6 +2769,7 @@ public struct ChatSendParams: Codable, Sendable {
         case attachments
         case timeoutms = "timeoutMs"
         case idempotencykey = "idempotencyKey"
+        case appuserid = "appUserId"
     }
 }
 
