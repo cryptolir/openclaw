@@ -366,6 +366,41 @@ describe("discovery pricing + source", () => {
     });
   });
 
+  it("sends the Venice API key as a Bearer header when provided", async () => {
+    setNonTestEnv();
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        data: [
+          {
+            id: "llama-3.3-70b",
+            model_spec: {
+              name: "Llama 3.3 70B",
+              privacy: "private",
+              availableContextTokens: 128000,
+              capabilities: {
+                supportsReasoning: false,
+                supportsVision: false,
+                supportsFunctionCalling: true,
+              },
+              pricing: { input: { usd: 0.7 }, output: { usd: 2.8 } },
+            },
+          },
+        ],
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await discoverVeniceModels("vk-test-key");
+    expect(fetchMock.mock.calls[0]?.[1]?.headers).toEqual({
+      Authorization: "Bearer vk-test-key",
+    });
+
+    await discoverVeniceModels();
+    expect(fetchMock.mock.calls[1]?.[1]?.headers).toBeUndefined();
+  });
+
   it("falls back to the zero-cost catalog with source fallback on fetch failure", async () => {
     setNonTestEnv();
     vi.spyOn(console, "warn").mockImplementation(() => {});

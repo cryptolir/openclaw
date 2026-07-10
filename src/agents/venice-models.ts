@@ -832,9 +832,11 @@ function resolveVeniceMaxTokens(params: {
 
 /**
  * Discover models from Venice API with fallback to static catalog.
- * The /models endpoint is public and doesn't require authentication.
+ * The /models endpoint currently answers without auth, but the Venice API
+ * docs require `Authorization: Bearer` on all requests — pass the key when
+ * one is available so discovery keeps working if that is ever enforced.
  */
-export async function discoverVeniceModels(): Promise<VeniceDiscoveryResult> {
+export async function discoverVeniceModels(apiKey?: string): Promise<VeniceDiscoveryResult> {
   // Skip API discovery in test environment. Static catalog = "fallback":
   // never authoritative for cost (plan §Design 3, Rev 5).
   if (process.env.NODE_ENV === "test" || process.env.VITEST) {
@@ -845,6 +847,7 @@ export async function discoverVeniceModels(): Promise<VeniceDiscoveryResult> {
     try {
       const response = await fetch(`${VENICE_BASE_URL}/models`, {
         signal: AbortSignal.timeout(timeoutMs),
+        headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : undefined,
       });
 
       if (!response.ok) {

@@ -540,11 +540,11 @@ export function buildXiaomiProvider(): ProviderConfig {
   };
 }
 
-async function buildVeniceProvider(): Promise<{
+async function buildVeniceProvider(apiKey?: string): Promise<{
   provider: ProviderConfig;
   source: VeniceDiscoverySource;
 }> {
-  const { models, source } = await discoverVeniceModels();
+  const { models, source } = await discoverVeniceModels(apiKey);
   return {
     provider: {
       baseUrl: VENICE_BASE_URL,
@@ -713,7 +713,7 @@ export async function resolveImplicitProviders(params: {
     resolveEnvApiKeyVarName("venice") ??
     resolveApiKeyFromProfiles({ provider: "venice", store: authStore });
   if (veniceKey) {
-    const venice = await buildVeniceProvider();
+    const venice = await buildVeniceProvider(veniceKey);
     providers.venice = { ...venice.provider, apiKey: veniceKey };
     veniceSource = venice.source;
   }
