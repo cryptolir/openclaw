@@ -4,8 +4,10 @@ export const VENICE_BASE_URL = "https://api.venice.ai/api/v1";
 export const VENICE_DEFAULT_MODEL_ID = "qwen3-5-9b";
 export const VENICE_DEFAULT_MODEL_REF = `venice/${VENICE_DEFAULT_MODEL_ID}`;
 
-// Venice uses credit-based pricing, not per-token costs.
-// Set to 0 as costs vary by model and account type.
+// Venice pricing comes from the live /models API (model_spec.pricing, USD per
+// million tokens — see docs/plans/venice-per-token-pricing.md). Zero means
+// "unpriced": the fail-closed fallback when the API omits pricing or discovery
+// falls back to the static catalog.
 export const VENICE_DEFAULT_COST = {
   input: 0,
   output: 0,
@@ -626,6 +628,147 @@ export function buildVeniceModelDefinition(entry: VeniceCatalogEntry): ModelDefi
   };
 }
 
+type VeniceModelCost = NonNullable<ModelDefinitionConfig["cost"]>;
+
+export type VeniceDiscoverySource = "api" | "fallback";
+
+export interface VeniceDiscoveryResult {
+  models: ModelDefinitionConfig[];
+  /** "api": live discovery succeeded — authoritative for cost. "fallback": static catalog. */
+  source: VeniceDiscoverySource;
+}
+
+interface VenicePricingRate {
+  usd?: number;
+}
+
+// Known base-tier rate fields plus unknown keys (context-tier objects like
+// `extended` carry a `context_token_threshold` — detected for the tier warn).
+export interface VenicePricing {
+  input?: VenicePricingRate;
+  output?: VenicePricingRate;
+  cache_input?: VenicePricingRate;
+  cache_write?: VenicePricingRate;
+  [key: string]: unknown;
+}
+
+const usdRate = (rate: unknown): number | null => {
+  if (!rate || typeof rate !== "object") {
+    return null;
+  }
+  const value = (rate as VenicePricingRate).usd;
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    return null;
+  }
+  return value;
+};
+
+/**
+ * Map Venice API per-model pricing (USD per million tokens) to a model cost.
+ * Fail-closed: a missing/malformed rate prices at $0 with one warn per model —
+ * never a guessed or sibling-model price. Context-tiered pricing (a tier object
+ * with `context_token_threshold`) is flagged; only the base tier is used.
+ * Plan: docs/plans/venice-per-token-pricing.md §Design 1 + §Design 4.
+ */
+export function veniceCostFromPricing(modelId: string, pricing?: VenicePricing): VeniceModelCost {
+  const rates = {
+    input: usdRate(pricing?.input),
+    output: usdRate(pricing?.output),
+    cache_input: usdRate(pricing?.cache_input),
+    cache_write: usdRate(pricing?.cache_write),
+  };
+  const missing = Object.entries(rates)
+    .filter(([, value]) => value === null)
+    .map(([field]) => field);
+  if (missing.length > 0) {
+    console.warn(
+      `[venice-models] ${modelId}: no usable pricing for ${missing.join(", ")} — pricing those at $0 (fail-closed)`,
+    );
+  }
+  for (const [tierKey, tier] of Object.entries(pricing ?? {})) {
+    if (tier && typeof tier === "object" && "context_token_threshold" in tier) {
+      const threshold = (tier as { context_token_threshold?: unknown }).context_token_threshold;
+      console.warn(
+        `[venice-models] ${modelId}: context-tiered pricing detected ("${tierKey}", threshold ${String(threshold)}) — using base tier; turns above the threshold will under-report cost`,
+      );
+    }
+  }
+  return {
+    input: rates.input ?? 0,
+    output: rates.output ?? 0,
+    cacheRead: rates.cache_input ?? 0,
+    cacheWrite: rates.cache_write ?? 0,
+  };
+}
+
+const modelId = (model: { id?: unknown }): string =>
+  typeof model.id === "string" ? model.id.trim() : "";
+
+/**
+ * A successful API discovery is authoritative for the cost of every id it
+ * returns (plan §Design 3): replace `cost` on retained entries for matching
+ * ids — including with a fail-closed zero — keeping every other field.
+ */
+export function refreshVeniceCosts<T extends { id?: unknown; cost?: unknown }>(
+  retained: T[],
+  authoritative: Array<{ id?: unknown; cost?: unknown }>,
+): T[] {
+  const costById = new Map<string, unknown>();
+  for (const model of authoritative) {
+    const id = modelId(model);
+    if (id && model.cost !== undefined) {
+      costById.set(id, model.cost);
+    }
+  }
+  return retained.map((model) => {
+    const id = modelId(model);
+    return id && costById.has(id) ? { ...model, cost: costById.get(id) } : model;
+  });
+}
+
+/**
+ * Decide whether a cached Venice provider (models.json) survives a new
+ * provider set (plan §Design 3, Rev 5). Returns the models to preserve, or
+ * null when the new set should simply replace the cache:
+ * - only a successful "api" discovery is cost-authoritative, and only via the
+ *   raw `apiModels` list it returned — never merged/explicit entries (the
+ *   zero-cost onboard catalog must not clobber last-known-good prices);
+ * - a "fallback" result — or a run where no Venice discovery happened at all
+ *   (`source` undefined) — never replaces a non-empty cache and never touches
+ *   costs; in every preserved case, new ids the cache lacks are appended
+ *   (fill semantics), so a new catalog/config model still lands.
+ */
+export function resolveVeniceCachePreservation<T extends { id?: unknown; cost?: unknown }>(params: {
+  existingModels: T[];
+  newModels: T[];
+  /** Raw API-discovered list — the only cost-authoritative set. Ignored unless source is "api". */
+  apiModels?: T[];
+  source?: VeniceDiscoverySource;
+}): { models: T[]; reason: string } | null {
+  const { existingModels, newModels, source } = params;
+  if (existingModels.length === 0) {
+    return null;
+  }
+  const isApi = source === "api";
+  if (isApi && newModels.length >= existingModels.length) {
+    return null;
+  }
+  const apiModels = isApi ? (params.apiModels ?? []) : [];
+  const refreshed =
+    apiModels.length > 0 ? refreshVeniceCosts(existingModels, apiModels) : existingModels;
+  const existingIds = new Set(existingModels.map(modelId).filter(Boolean));
+  const fill = newModels.filter((model) => {
+    const id = modelId(model);
+    return id.length > 0 && !existingIds.has(id);
+  });
+  const reason = isApi
+    ? `discovery returned only ${newModels.length}; costs refreshed from API`
+    : source === "fallback"
+      ? "discovery fell back to the static catalog"
+      : "no Venice discovery ran";
+  return { models: [...refreshed, ...fill], reason };
+}
+
 // Venice API response types
 interface VeniceModelSpec {
   name: string;
@@ -637,6 +780,7 @@ interface VeniceModelSpec {
     supportsVision: boolean;
     supportsFunctionCalling: boolean;
   };
+  pricing?: VenicePricing;
 }
 
 interface VeniceModel {
@@ -675,10 +819,11 @@ function resolveVeniceMaxTokens(params: {
  * Discover models from Venice API with fallback to static catalog.
  * The /models endpoint is public and doesn't require authentication.
  */
-export async function discoverVeniceModels(): Promise<ModelDefinitionConfig[]> {
-  // Skip API discovery in test environment
+export async function discoverVeniceModels(): Promise<VeniceDiscoveryResult> {
+  // Skip API discovery in test environment. Static catalog = "fallback":
+  // never authoritative for cost (plan §Design 3, Rev 5).
   if (process.env.NODE_ENV === "test" || process.env.VITEST) {
-    return VENICE_MODEL_CATALOG.map(buildVeniceModelDefinition);
+    return { models: VENICE_MODEL_CATALOG.map(buildVeniceModelDefinition), source: "fallback" };
   }
 
   async function attemptDiscovery(timeoutMs: number): Promise<ModelDefinitionConfig[] | null> {
@@ -719,6 +864,7 @@ export async function discoverVeniceModels(): Promise<ModelDefinitionConfig[]> {
             ...buildVeniceModelDefinition(catalogEntry),
             contextWindow,
             maxTokens,
+            cost: veniceCostFromPricing(apiModel.id, apiModel.model_spec.pricing),
           });
         } else {
           const isReasoning =
@@ -734,7 +880,7 @@ export async function discoverVeniceModels(): Promise<ModelDefinitionConfig[]> {
             name: apiModel.model_spec.name || apiModel.id,
             reasoning: isReasoning,
             input: hasVision ? ["text", "image"] : ["text"],
-            cost: VENICE_DEFAULT_COST,
+            cost: veniceCostFromPricing(apiModel.id, apiModel.model_spec.pricing),
             contextWindow:
               coercePositiveNumber(apiModel.model_spec.availableContextTokens) ?? 128000,
             maxTokens: resolveVeniceMaxTokens({
@@ -759,7 +905,7 @@ export async function discoverVeniceModels(): Promise<ModelDefinitionConfig[]> {
   // First attempt with 15s timeout
   const first = await attemptDiscovery(15_000);
   if (first) {
-    return first;
+    return { models: first, source: "api" };
   }
 
   // Retry once after 1s delay with 10s timeout
@@ -767,10 +913,10 @@ export async function discoverVeniceModels(): Promise<ModelDefinitionConfig[]> {
   await new Promise((resolve) => setTimeout(resolve, 1000));
   const second = await attemptDiscovery(10_000);
   if (second) {
-    return second;
+    return { models: second, source: "api" };
   }
 
-  // Fall back to static catalog
+  // Fall back to static catalog (zero-cost — never authoritative for cost)
   console.warn("[venice-models] All discovery attempts failed, using static catalog");
-  return VENICE_MODEL_CATALOG.map(buildVeniceModelDefinition);
+  return { models: VENICE_MODEL_CATALOG.map(buildVeniceModelDefinition), source: "fallback" };
 }

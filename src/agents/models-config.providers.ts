@@ -28,7 +28,11 @@ import {
   TOGETHER_MODEL_CATALOG,
   buildTogetherModelDefinition,
 } from "./together-models.js";
-import { discoverVeniceModels, VENICE_BASE_URL } from "./venice-models.js";
+import {
+  discoverVeniceModels,
+  VENICE_BASE_URL,
+  type VeniceDiscoverySource,
+} from "./venice-models.js";
 
 type ModelsConfig = NonNullable<OpenClawConfig["models"]>;
 export type ProviderConfig = NonNullable<ModelsConfig["providers"]>[string];
@@ -536,12 +540,18 @@ export function buildXiaomiProvider(): ProviderConfig {
   };
 }
 
-async function buildVeniceProvider(): Promise<ProviderConfig> {
-  const models = await discoverVeniceModels();
+async function buildVeniceProvider(): Promise<{
+  provider: ProviderConfig;
+  source: VeniceDiscoverySource;
+}> {
+  const { models, source } = await discoverVeniceModels();
   return {
-    baseUrl: VENICE_BASE_URL,
-    api: "openai-completions",
-    models,
+    provider: {
+      baseUrl: VENICE_BASE_URL,
+      api: "openai-completions",
+      models,
+    },
+    source,
   };
 }
 
@@ -659,8 +669,13 @@ export function buildNvidiaProvider(): ProviderConfig {
 export async function resolveImplicitProviders(params: {
   agentDir: string;
   explicitProviders?: Record<string, ProviderConfig> | null;
-}): Promise<ModelsConfig["providers"]> {
+}): Promise<{
+  providers: Record<string, ProviderConfig>;
+  /** Set when an implicit Venice provider was built — drives the cost-aware merge. */
+  veniceSource?: VeniceDiscoverySource;
+}> {
   const providers: Record<string, ProviderConfig> = {};
+  let veniceSource: VeniceDiscoverySource | undefined;
   const authStore = ensureAuthProfileStore(params.agentDir, {
     allowKeychainPrompt: false,
   });
@@ -698,7 +713,9 @@ export async function resolveImplicitProviders(params: {
     resolveEnvApiKeyVarName("venice") ??
     resolveApiKeyFromProfiles({ provider: "venice", store: authStore });
   if (veniceKey) {
-    providers.venice = { ...(await buildVeniceProvider()), apiKey: veniceKey };
+    const venice = await buildVeniceProvider();
+    providers.venice = { ...venice.provider, apiKey: veniceKey };
+    veniceSource = venice.source;
   }
 
   const qwenProfiles = listProfilesForProvider(authStore, "qwen-portal");
@@ -807,7 +824,7 @@ export async function resolveImplicitProviders(params: {
     providers.nvidia = { ...buildNvidiaProvider(), apiKey: nvidiaKey };
   }
 
-  return providers;
+  return { providers, veniceSource };
 }
 
 export async function resolveImplicitCopilotProvider(params: {
