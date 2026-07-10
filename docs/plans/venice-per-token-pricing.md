@@ -218,7 +218,7 @@ discovery for the same id. One principle fixes both:
   considered and rejected: making the onboard path fetch prices — it runs in CLI
   auth flows without guaranteed network and would duplicate discovery.
 
-### 4. Context tiers — base rate + flag (Codex round 3, P2)
+### 4. Context tiers: base rate + flag (Codex round 3, P2)
 
 Venice's `model_spec.pricing` can carry higher-context tiers (e.g.
 `qwen-3-6-plus` has `pricing.extended` with `context_token_threshold: 256000`
