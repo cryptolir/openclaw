@@ -1,7 +1,29 @@
 # Venice per-token pricing — make the usage/billing report see Venice spend
 
-**Status:** Rev 1 — for Codex review
+**Status:** Rev 2 — folds Codex round 1
 **Repo:** `cryptolir/openclaw` (gateway). No dashboard code changes in this plan.
+
+### Rev 2 — Codex round 1 (2026-07-10)
+
+Three findings, all valid, all folded:
+
+- **P1 (design-changing) — explicit-config Venice path missed.** My "exactly two
+  places" was wrong. `applyVeniceProviderConfig`
+  (`src/commands/onboard-auth.config-core.ts:295`) writes the zero-cost static
+  catalog into **explicit** config, and `mergeProviderModels`
+  (`src/agents/models-config.ts`) puts explicit models first and **drops**
+  same-id implicit models — so a Venice-onboarded agent keeps the zero-cost
+  entry even after discovery learns the price. Threading discovery alone would
+  leave much of the fleet at $0. Fix: a **cost-aware merge** (§Design 3) so a
+  priced discovered model overrides a zero-cost same-id entry.
+- **P2 (cacheRead fallback) — violated my own fail-closed invariant.** Changed
+  `cacheRead: cache_input ?? input` → `?? 0` + warn. No guessed cache price.
+- **P2 (stale cache) — was "accepted risk", now fixed.** Same cost-aware merge
+  resolves it: the merge no longer lets a larger zero-cost cache shadow priced
+  discovery for overlapping ids. Moved out of Risks.
+
+P1 and the stale-cache P2 collapse to **one** mechanism (cost-aware merge) —
+see §Design 3.
 
 ## Problem (verified live, 2026-07-10)
 
@@ -30,8 +52,20 @@ flagged gap, so nothing warns.
    export const VENICE_DEFAULT_COST = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
    ```
 
-   Used in exactly two places: `buildVeniceModelDefinition` (line 618, catalog
-   models) and the non-catalog branch of `discoverVeniceModels` (line 737).
+   Used in **three** places (Rev 2 correction — was "two"):
+   (a) `buildVeniceModelDefinition` (line 618) — called both by discovery's
+   catalog-match branch **and** by the explicit-config path below;
+   (b) the non-catalog branch of `discoverVeniceModels` (line 737);
+   (c) **`applyVeniceProviderConfig`** (`src/commands/onboard-auth.config-core.ts:295`)
+   — maps `VENICE_MODEL_CATALOG` through `buildVeniceModelDefinition` into
+   **explicit** `cfg.models.providers.venice` at onboard/auth time.
+
+   **Merge precedence (the P1 root cause):** `mergeProviderModels`
+   (`src/agents/models-config.ts`) concatenates explicit models first, then adds
+   an implicit model only if its id is not already in the explicit set
+   (`seen.has(id) → drop`). So for a model present in both the zero-cost explicit
+   catalog (c) and priced discovery (b), the **zero-cost explicit entry wins and
+   the priced one is discarded**. Same shape defeats the stale-cache case.
 
 2. **The comment is outdated.** Venice's `GET /api/v1/models` returns per-token
    USD pricing today (verified live):
@@ -74,27 +108,31 @@ flagged gap, so nothing warns.
 
 ## Design
 
-One pure function + threading. All in `src/agents/venice-models.ts`.
+Rev 2: a pure pricing fn + discovery threading (`src/agents/venice-models.ts`)
+**plus** a Venice-scoped cost-aware merge (`src/agents/models-config.ts`) so
+priced discovery wins over zero-cost onboard/cached entries.
 
 ### 1. Pure mapping fn
 
 ```ts
 export function veniceCostFromPricing(pricing?: VenicePricing): ModelCost {
-  const input = pricing?.input?.usd ?? 0;
   return {
-    input,
-    output: pricing?.output?.usd ?? 0,
-    // No cache_input price ⇒ bill cached reads at the input rate rather than
-    // silently free (conservative: overstates ≤ input rate, never hides spend).
-    cacheRead: pricing?.cache_input?.usd ?? input,
-    cacheWrite: pricing?.cache_write?.usd ?? 0,
+    input: usd(pricing?.input),
+    output: usd(pricing?.output),
+    // Rev 2 (Codex P2): fail closed. A missing cache price is 0+warn, NOT the
+    // input rate — a guessed nonzero rate would overstate spend and could
+    // trip a spend-cap suspension. `usd()` returns 0 for missing/NaN/negative.
+    cacheRead: usd(pricing?.cache_input),
+    cacheWrite: usd(pricing?.cache_write),
   };
 }
 ```
 
-- `pricing` absent entirely → all zeros (identical to today) **plus one
-  `console.warn` per model id** naming the unpriced model. Fail-closed to $0,
-  but loud — never a guessed price.
+- `usd(field)` = the finite non-negative `field.usd`, else 0. Any field that
+  falls back to 0 emits **one `console.warn`** naming the model id and the
+  missing field, so an unpriced-but-used dimension is loud, never silent.
+- `pricing` absent entirely → all zeros (identical to today) + warn. Fail-closed
+  to $0 — never a guessed or sibling-model price.
 - Add `pricing?: VenicePricing` to the `VeniceModelSpec` interface
   (`{ input?: {usd?: number}; output?: {usd?: number}; cache_input?: {usd?: number}; cache_write?: {usd?: number} }`).
   All fields optional; non-finite/negative `usd` values are treated as absent
@@ -115,6 +153,33 @@ export function veniceCostFromPricing(pricing?: VenicePricing): ModelCost {
 - `VENICE_DEFAULT_COST` stays as the zero fallback constant; the stale comment
   at line 7 is updated to say pricing comes from the API and zero means
   "unpriced".
+
+### 3. Cost-aware merge — resolves P1 (explicit path) + P2 (stale cache)
+
+The explicit onboard catalog (source c) and any larger stale cache both write
+**zero-cost** Venice entries that `mergeProviderModels` lets win over priced
+discovery for the same id. One mechanism fixes both: **when merging the Venice
+provider, a same-id model with real pricing overrides a zero-cost entry's
+`cost`.**
+
+- Scope the change to `mergeProviderModels` **for the `venice` provider only**
+  (or a small pre-merge normalize step keyed on provider id) — do not change
+  generic merge semantics for other providers (invariant 3: only `cost`, only
+  Venice).
+- Rule: for each id present in both explicit and implicit, if the explicit
+  entry's `cost` is all-zero and the implicit entry's `cost` is nonzero, take
+  the implicit `cost` (keep everything else — id, aliases, contextWindow — from
+  the explicit entry). Symmetric for the stale-cache merge in
+  `ensureAgentModelsJson` (the `models-config.ts:~123` guard): preserving cached
+  entries is fine, but a matching priced discovery must refresh their `cost`.
+- This keeps discovery as the single price source and needs no hand-maintained
+  prices. If discovery hasn't run yet (fresh onboard, API down), entries stay
+  zero-cost + the existing warn until the next successful discovery — fail-open
+  to $0 visibility, never a wrong price.
+- **`applyVeniceProviderConfig` itself is left writing the catalog** (it has no
+  API data at onboard time); the merge is where price wins. Alternative
+  considered and rejected: making the onboard path fetch prices — it runs in CLI
+  auth flows without guaranteed network and would duplicate discovery.
 
 ### Explicitly relying on (no changes)
 
@@ -164,12 +229,18 @@ pricing on makes these caps real for Venice workspaces for the first time.
 ## Tests (vitest, extend `src/agents/venice-models.test.ts`)
 
 - `veniceCostFromPricing`: full pricing → exact mapping (opus-4-6 fixture:
-  6/30/0.6/7.5); missing `cache_input` → cacheRead = input rate (qwen3-5-9b
-  fixture: 0.1/0.15/0.1/0); missing `cache_write` → 0; `pricing` absent →
-  all-zero + warn called; negative/NaN/`usd` missing → treated as absent.
+  6/30/0.6/7.5); **Rev 2 P2:** missing `cache_input` → cacheRead **0** + warn
+  (qwen3-5-9b fixture: 0.1/0.15/**0**/0); missing `cache_write` → 0; `pricing`
+  absent → all-zero + warn; negative/NaN/`usd` missing → 0 + warn.
 - Discovery (existing mocked-fetch tests): catalog-match model carries API
   pricing (not `VENICE_DEFAULT_COST`); non-catalog model likewise; API-failure
   fallback still returns catalog models with zero cost.
+- **Rev 2 P1 — cost-aware merge:** a `venice` provider merge where explicit
+  (zero-cost) and implicit (priced) share an id → merged entry carries the
+  priced `cost` (proves the onboard-catalog case is repriced); a non-Venice
+  provider with the same collision is **unchanged** (proves scope); the
+  stale-cache guard (`ensureAgentModelsJson`, discovery returns fewer models)
+  refreshes cost for matching ids.
 - Every hole Codex catches in review becomes a named case here (protocol §4).
 
 ## Deliberately NOT building
@@ -196,11 +267,11 @@ pricing on makes these caps real for Venice workspaces for the first time.
 
 ## Risks
 
-- **Stale-cache preservation:** `ensureAgentModelsJson` merge mode keeps the
-  cached Venice provider when discovery returns fewer models than the file on
-  disk (`models-config.ts:~123`) — a discovery timeout on boot leaves that
-  agent's Venice costs at 0 until a later successful discovery. Accepted:
-  self-heals on next good boot; post-roll verification on `life` catches it.
+- ~~**Stale-cache preservation**~~ — **Rev 2: moved to a fix, not a risk.** The
+  cost-aware merge (§Design 3) refreshes `cost` for matching ids, so a
+  larger/older zero-cost cache no longer shadows priced discovery. A discovery
+  timeout still leaves fresh-boot costs at 0 + warn until the next good
+  discovery — fail-open to $0 visibility, never a wrong price.
 - **Venice reprices models:** costs update on every successful discovery, so
   they track the API automatically; between discoveries they can be briefly
   stale. Accepted for operator-visibility purposes.
