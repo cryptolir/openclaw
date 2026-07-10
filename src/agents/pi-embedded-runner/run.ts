@@ -274,7 +274,15 @@ export async function runEmbeddedPiAgent(
         params.config,
       );
       if (!model) {
-        throw new Error(error ?? `Unknown model: ${provider}/${modelId}`);
+        // Must be a FailoverError: a plain Error is rethrown by
+        // runWithModelFallback, so an unresolvable primary (delisted model,
+        // stale session pin, missing provider) would hard-fail without ever
+        // trying the configured fallbacks (OB-16).
+        throw new FailoverError(error ?? `Unknown model: ${provider}/${modelId}`, {
+          reason: "unknown",
+          provider,
+          model: modelId,
+        });
       }
 
       const ctxInfo = resolveContextWindowInfo({

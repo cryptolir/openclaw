@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import "./test-helpers/fast-coding-tools.js";
 import type { OpenClawConfig } from "../config/config.js";
+import { isFailoverError } from "./failover-error.js";
 import { ensureOpenClawModelsJson } from "./models-config.js";
 
 vi.mock("@mariozechner/pi-ai", async () => {
@@ -252,22 +253,27 @@ describe("runEmbeddedPiAgent", () => {
       },
     } satisfies OpenClawConfig;
 
-    await expect(
-      runEmbeddedPiAgent({
-        sessionId: "session:test",
-        sessionKey: testSessionKey,
-        sessionFile,
-        workspaceDir,
-        config: cfg,
-        prompt: "hi",
-        provider: "definitely-not-a-provider",
-        model: "definitely-not-a-model",
-        timeoutMs: 1,
-        agentDir,
-        runId: nextRunId("unknown-model"),
-        enqueue: immediateEnqueue,
-      }),
-    ).rejects.toThrow(/Unknown model:/);
+    const unknownModelError = await runEmbeddedPiAgent({
+      sessionId: "session:test",
+      sessionKey: testSessionKey,
+      sessionFile,
+      workspaceDir,
+      config: cfg,
+      prompt: "hi",
+      provider: "definitely-not-a-provider",
+      model: "definitely-not-a-model",
+      timeoutMs: 1,
+      agentDir,
+      runId: nextRunId("unknown-model"),
+      enqueue: immediateEnqueue,
+    }).then(
+      () => null,
+      (err: unknown) => err,
+    );
+    expect(String(unknownModelError)).toMatch(/Unknown model:/);
+    // OB-16: must be a FailoverError so runWithModelFallback falls through to
+    // the configured fallbacks instead of hard-failing before the first try.
+    expect(isFailoverError(unknownModelError)).toBe(true);
 
     await expect(fs.stat(path.join(agentDir, "models.json"))).resolves.toBeTruthy();
   });
