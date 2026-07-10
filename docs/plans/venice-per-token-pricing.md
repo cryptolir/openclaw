@@ -271,6 +271,46 @@ larger change than this plan.
 - Unit consistency: Venice `usd` (per-M) → `ModelCost` (per-M) → pi-ai
   divides by 1M. No conversion constant anywhere.
 
+## Rev 5 implementation notes (verification-workflow folds)
+
+A pre-handoff 4-lens adversarial verification of the implementation diff caught
+two holes in how the Rev 5 rules were first coded; both are folded and named
+in §Tests. They refine — not change — the approved principle ("only a
+successful API discovery is cost-authoritative"):
+
+- **Raw-API authority in the cache guard.** The guard must refresh cached
+  costs from the _raw discovered list_, never the merged provider models —
+  otherwise explicit onboard-catalog zeros piggyback into the authoritative
+  set and zero out cached prices for ids the API did not return.
+- **No-discovery runs are non-authoritative.** When no implicit Venice
+  discovery ran at all (`veniceSource` undefined — no env key/profile, e.g. a
+  CLI run outside docker), the guard behaves like "fallback": never refreshes
+  costs, preserves a non-empty cache, fills missing ids. Defaulting the
+  unknown case to "api" would let an explicit-only run rewrite cached prices.
+- **Fill semantics everywhere.** Every preserved-cache outcome appends new ids
+  the cache lacks (zero-cost for fallback/no-discovery entries), so a newly
+  added catalog or config model still lands during an API outage; and
+  `refreshVeniceCosts` skips authoritative entries without a `cost` field
+  (never writes `cost: undefined`).
+
+### Impl review round 1 (Codex, 2026-07-10): id-based reconcile
+
+Two P2s on the implementation PR, folded as one mechanism change — the cache
+guard's count-based early-return became a fully **id-based reconcile**
+(`reconcileVeniceModels`), and the guard now always keeps the **new provider
+object** (fresh `apiKey`/`baseUrl`/compat), only swapping in the reconciled
+model list:
+
+- count comparisons are gone: even when the API returns _more_ models overall,
+  an id it omitted keeps its cached cost (the explicit catalog zero for that id
+  cannot clobber it);
+- preserved-cache paths no longer discard current provider metadata (the old
+  `delete providers.venice` kept a stale cached provider object wholesale).
+
+Named tests: "explicit-only ids never zero cached prices — authority is
+id-based, not count-based", "cached-only ids are appended", "fallback/no
+discovery never clobbers cached costs and fills new ids".
+
 ## Trust-boundary impact (dashboard spend caps)
 
 `openclaw-dashboard` `snapshotAllWorkspaces` feeds

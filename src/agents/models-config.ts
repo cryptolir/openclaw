@@ -10,6 +10,11 @@ import {
   resolveImplicitCopilotProvider,
   resolveImplicitProviders,
 } from "./models-config.providers.js";
+import {
+  reconcileVeniceModels,
+  refreshVeniceCosts,
+  type VeniceDiscoverySource,
+} from "./venice-models.js";
 
 type ModelsConfig = NonNullable<OpenClawConfig["models"]>;
 
@@ -53,9 +58,10 @@ function mergeProviderModels(implicit: ProviderConfig, explicit: ProviderConfig)
   };
 }
 
-function mergeProviders(params: {
+export function mergeProviders(params: {
   implicit?: Record<string, ProviderConfig> | null;
   explicit?: Record<string, ProviderConfig> | null;
+  veniceSource?: VeniceDiscoverySource;
 }): Record<string, ProviderConfig> {
   const out: Record<string, ProviderConfig> = params.implicit ? { ...params.implicit } : {};
   for (const [key, explicit] of Object.entries(params.explicit ?? {})) {
@@ -64,7 +70,19 @@ function mergeProviders(params: {
       continue;
     }
     const implicit = out[providerKey];
-    out[providerKey] = implicit ? mergeProviderModels(implicit, explicit) : explicit;
+    let merged = implicit ? mergeProviderModels(implicit, explicit) : explicit;
+    // Venice cost-aware merge (docs/plans/venice-per-token-pricing.md §Design 3):
+    // a successful API discovery is authoritative for the cost of every id it
+    // returned, so explicit entries (e.g. the zero-cost onboard catalog) get
+    // their cost refreshed. Fallback discoveries never overwrite costs.
+    if (providerKey === "venice" && implicit && params.veniceSource === "api") {
+      const implicitModels = Array.isArray(implicit.models) ? implicit.models : [];
+      const mergedModels = Array.isArray(merged.models) ? merged.models : [];
+      if (implicitModels.length > 0 && mergedModels.length > 0) {
+        merged = { ...merged, models: refreshVeniceCosts(mergedModels, implicitModels) };
+      }
+    }
+    out[providerKey] = merged;
   }
   return out;
 }
@@ -86,10 +104,14 @@ export async function ensureOpenClawModelsJson(
   const agentDir = agentDirOverride?.trim() ? agentDirOverride.trim() : resolveOpenClawAgentDir();
 
   const explicitProviders = cfg.models?.providers ?? {};
-  const implicitProviders = await resolveImplicitProviders({ agentDir, explicitProviders });
+  const { providers: implicitProviders, veniceSource } = await resolveImplicitProviders({
+    agentDir,
+    explicitProviders,
+  });
   const providers: Record<string, ProviderConfig> = mergeProviders({
     implicit: implicitProviders,
     explicit: explicitProviders,
+    veniceSource,
   });
   const implicitBedrock = await resolveImplicitBedrockProvider({ agentDir, config: cfg });
   if (implicitBedrock) {
@@ -120,21 +142,30 @@ export async function ensureOpenClawModelsJson(
         NonNullable<ModelsConfig["providers"]>[string]
       >;
 
-      // Preserve cached Venice models when discovery returns fewer models than
-      // what's already on disk. This prevents a timeout from overwriting a
-      // previously-successful 69-model discovery with a stale static catalog.
+      // Reconcile the Venice model list per docs/plans/venice-per-token-pricing.md
+      // §Design 3 (Rev 5 + impl notes): authority is id-based — only ids the raw
+      // API discovery returned carry API cost authority; every other id keeps
+      // its cached cost when one exists, and cached-only ids are appended. The
+      // NEW provider object always wins (apiKey/baseUrl/compat stay fresh);
+      // only the model list is reconciled.
       const existingVenice = existingProviders.venice;
       const newVenice = providers.venice;
       if (existingVenice && newVenice) {
-        const existingCount = Array.isArray(existingVenice.models)
-          ? existingVenice.models.length
-          : 0;
-        const newCount = Array.isArray(newVenice.models) ? newVenice.models.length : 0;
-        if (existingCount > 0 && newCount > 0 && newCount < existingCount) {
-          console.warn(
-            `[venice-models] Preserving ${existingCount} cached models (discovery returned only ${newCount})`,
-          );
-          delete providers.venice;
+        const cachedModels = Array.isArray(existingVenice.models) ? existingVenice.models : [];
+        const newModels = Array.isArray(newVenice.models) ? newVenice.models : [];
+        const implicitVenice = implicitProviders?.venice;
+        const apiModels =
+          veniceSource === "api" && Array.isArray(implicitVenice?.models)
+            ? implicitVenice.models
+            : [];
+        if (cachedModels.length > 0 && newModels.length > 0) {
+          const reconciled = reconcileVeniceModels({ cachedModels, newModels, apiModels });
+          if (reconciled.restoredCostCount > 0 || reconciled.preservedIdCount > 0) {
+            console.warn(
+              `[venice-models] Reconciled with cache: restored ${reconciled.restoredCostCount} cached cost(s), preserved ${reconciled.preservedIdCount} cached-only model(s)`,
+            );
+          }
+          providers.venice = { ...newVenice, models: reconciled.models };
         }
       }
 

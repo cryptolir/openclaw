@@ -28,7 +28,11 @@ import {
   TOGETHER_MODEL_CATALOG,
   buildTogetherModelDefinition,
 } from "./together-models.js";
-import { discoverVeniceModels, VENICE_BASE_URL } from "./venice-models.js";
+import {
+  discoverVeniceModels,
+  VENICE_BASE_URL,
+  type VeniceDiscoverySource,
+} from "./venice-models.js";
 
 type ModelsConfig = NonNullable<OpenClawConfig["models"]>;
 export type ProviderConfig = NonNullable<ModelsConfig["providers"]>[string];
@@ -536,12 +540,18 @@ export function buildXiaomiProvider(): ProviderConfig {
   };
 }
 
-async function buildVeniceProvider(): Promise<ProviderConfig> {
-  const models = await discoverVeniceModels();
+async function buildVeniceProvider(apiKey?: string): Promise<{
+  provider: ProviderConfig;
+  source: VeniceDiscoverySource;
+}> {
+  const { models, source } = await discoverVeniceModels(apiKey);
   return {
-    baseUrl: VENICE_BASE_URL,
-    api: "openai-completions",
-    models,
+    provider: {
+      baseUrl: VENICE_BASE_URL,
+      api: "openai-completions",
+      models,
+    },
+    source,
   };
 }
 
@@ -659,8 +669,13 @@ export function buildNvidiaProvider(): ProviderConfig {
 export async function resolveImplicitProviders(params: {
   agentDir: string;
   explicitProviders?: Record<string, ProviderConfig> | null;
-}): Promise<ModelsConfig["providers"]> {
+}): Promise<{
+  providers: Record<string, ProviderConfig>;
+  /** Set when an implicit Venice provider was built — drives the cost-aware merge. */
+  veniceSource?: VeniceDiscoverySource;
+}> {
   const providers: Record<string, ProviderConfig> = {};
+  let veniceSource: VeniceDiscoverySource | undefined;
   const authStore = ensureAuthProfileStore(params.agentDir, {
     allowKeychainPrompt: false,
   });
@@ -694,11 +709,20 @@ export async function resolveImplicitProviders(params: {
     providers.synthetic = { ...buildSyntheticProvider(), apiKey: syntheticKey };
   }
 
-  const veniceKey =
-    resolveEnvApiKeyVarName("venice") ??
-    resolveApiKeyFromProfiles({ provider: "venice", store: authStore });
+  const veniceEnvVarName = resolveEnvApiKeyVarName("venice");
+  const veniceProfileKey = veniceEnvVarName
+    ? undefined
+    : resolveApiKeyFromProfiles({ provider: "venice", store: authStore });
+  const veniceKey = veniceEnvVarName ?? veniceProfileKey;
   if (veniceKey) {
-    providers.venice = { ...(await buildVeniceProvider()), apiKey: veniceKey };
+    // models.json stores the env var NAME (resolved at runtime), but the
+    // discovery request needs the real secret for its Authorization header.
+    const veniceDiscoveryKey = veniceEnvVarName
+      ? resolveEnvApiKey("venice")?.apiKey
+      : veniceProfileKey;
+    const venice = await buildVeniceProvider(veniceDiscoveryKey);
+    providers.venice = { ...venice.provider, apiKey: veniceKey };
+    veniceSource = venice.source;
   }
 
   const qwenProfiles = listProfilesForProvider(authStore, "qwen-portal");
@@ -807,7 +831,7 @@ export async function resolveImplicitProviders(params: {
     providers.nvidia = { ...buildNvidiaProvider(), apiKey: nvidiaKey };
   }
 
-  return providers;
+  return { providers, veniceSource };
 }
 
 export async function resolveImplicitCopilotProvider(params: {

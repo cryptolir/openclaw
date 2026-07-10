@@ -12,7 +12,7 @@ describe("Qianfan provider", () => {
     process.env.QIANFAN_API_KEY = "test-key";
 
     try {
-      const providers = await resolveImplicitProviders({ agentDir });
+      const { providers } = await resolveImplicitProviders({ agentDir });
       expect(providers?.qianfan).toBeDefined();
       expect(providers?.qianfan?.apiKey).toBe("QIANFAN_API_KEY");
     } finally {

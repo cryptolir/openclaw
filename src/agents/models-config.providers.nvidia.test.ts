@@ -13,7 +13,7 @@ describe("NVIDIA provider", () => {
     process.env.NVIDIA_API_KEY = "test-key";
 
     try {
-      const providers = await resolveImplicitProviders({ agentDir });
+      const { providers } = await resolveImplicitProviders({ agentDir });
       expect(providers?.nvidia).toBeDefined();
       expect(providers?.nvidia?.models?.length).toBeGreaterThan(0);
     } finally {
@@ -64,7 +64,7 @@ describe("MiniMax implicit provider (#15275)", () => {
     process.env.MINIMAX_API_KEY = "test-key";
 
     try {
-      const providers = await resolveImplicitProviders({ agentDir });
+      const { providers } = await resolveImplicitProviders({ agentDir });
       expect(providers?.minimax).toBeDefined();
       expect(providers?.minimax?.api).toBe("anthropic-messages");
       expect(providers?.minimax?.baseUrl).toBe("https://api.minimax.io/anthropic");
@@ -81,7 +81,7 @@ describe("vLLM provider", () => {
     delete process.env.VLLM_API_KEY;
 
     try {
-      const providers = await resolveImplicitProviders({ agentDir });
+      const { providers } = await resolveImplicitProviders({ agentDir });
       expect(providers?.vllm).toBeUndefined();
     } finally {
       envSnapshot.restore();
@@ -94,7 +94,7 @@ describe("vLLM provider", () => {
     process.env.VLLM_API_KEY = "test-key";
 
     try {
-      const providers = await resolveImplicitProviders({ agentDir });
+      const { providers } = await resolveImplicitProviders({ agentDir });
 
       expect(providers?.vllm).toBeDefined();
       expect(providers?.vllm?.apiKey).toBe("VLLM_API_KEY");
