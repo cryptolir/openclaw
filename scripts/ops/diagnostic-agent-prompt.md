@@ -17,8 +17,8 @@ don't need to SSH by hand. Use a manual SSH only to dig deeper into a specific f
 
 ## Bug list — the source of truth
 
-- **Link:** https://github.com/cryptolir/openclaw/blob/main/scripts/ops/bug_list.md
-- **Local checkout:** `/root/projects/openclaw/scripts/ops/bug_list.md`
+- **Link:** https://github.com/cryptolir/openclaw-dashboard/blob/main/docs/ops/bug_list.md (moved to the private dashboard repo 2026-07-10)
+- **Local checkout:** `/root/AgentGlob_Apps/openclaw-dashboard/docs/ops/bug_list.md`
 - The file has two zones:
   - **Curated** tables (`Open` + `Resolved`) — human/agent-owned. You edit these with judgment.
   - **AUTOSCAN block** (between `<!-- AUTOSCAN:START -->` / `<!-- AUTOSCAN:END -->`) — the
@@ -53,7 +53,8 @@ don't need to SSH by hand. Use a manual SSH only to dig deeper into a specific f
 4. **Sync findings back to git** (keep the file and the repo in lockstep — always):
 
    ```
-   git add scripts/ops/bug_list.md
+   cd /root/AgentGlob_Apps/openclaw-dashboard
+   git add docs/ops/bug_list.md
    git commit -m "docs(ops): bug_list refresh $(date +%Y-%m-%d)"
    git push origin main
    ```
@@ -82,7 +83,7 @@ Send a concise, skimmable summary:
   3. **Agents:** count up / total per host; name any not `running` or crash-looping.
   4. **Issues:** the prioritised `C+D` list from the scan (P0→P3).
   5. **Changed since last run:** what you added/updated/resolved in the bug list.
-  6. **Link:** https://github.com/cryptolir/openclaw/blob/main/scripts/ops/bug_list.md
+  6. **Link:** https://github.com/cryptolir/openclaw-dashboard/blob/main/docs/ops/bug_list.md
 
 **Send command** (msmtp + Gmail is configured on the dev server; sender `onetrue2023@gmail.com`):
 
