@@ -18,20 +18,37 @@ export SSH_KEY=/root/.ssh/hetzner-openclaw
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 EMAIL_TO=liran@agentglob.com
 EMAIL_FROM="AgentGlob Diagnostics <onetrue2023@gmail.com>"
-BUG_LIST_URL=https://github.com/cryptolir/openclaw/blob/main/scripts/ops/bug_list.md
+# bug_list.md lives in the PRIVATE dashboard repo (moved 2026-07-10 — it carries
+# live infra state that doesn't belong in this public repo).
+DASH_REPO="${DASH_REPO:-/root/AgentGlob_Apps/openclaw-dashboard}"
+BUG_LIST_REL=docs/ops/bug_list.md
+BUG_LIST="$DASH_REPO/$BUG_LIST_REL"
+BUG_LIST_URL=https://github.com/cryptolir/openclaw-dashboard/blob/main/docs/ops/bug_list.md
 
 cd "$REPO" || { echo "FATAL: $REPO not found"; exit 1; }
 
 echo "═══════════════════════════════════════════════════════════════"
 echo "diagnostic-cron run @ $(date '+%Y-%m-%d %H:%M:%S %Z')"
 
-# 1. Start from a clean bug_list so `git pull` never collides with the last
-#    run's uncommitted AUTOSCAN write, then sync to latest main.
-git checkout -- scripts/ops/bug_list.md 2>/dev/null || true
+# 1. Sync this repo (scripts), then the dashboard repo (bug_list.md). Reset the
+#    bug_list first so `git pull` never collides with the last run's
+#    uncommitted AUTOSCAN write. Only touch the dashboard checkout on main —
+#    never yank someone's feature branch out from under them.
 git pull -q --rebase --autostash origin main || echo "WARN: git pull failed; continuing with local tree"
+if git -C "$DASH_REPO" rev-parse --git-dir >/dev/null 2>&1; then
+  if [[ "$(git -C "$DASH_REPO" branch --show-current)" == "main" ]]; then
+    git -C "$DASH_REPO" checkout -- "$BUG_LIST_REL" 2>/dev/null || true
+    git -C "$DASH_REPO" pull -q --rebase --autostash origin main \
+      || echo "WARN: dashboard git pull failed; continuing with local tree"
+  else
+    echo "WARN: $DASH_REPO is not on main — bug_list sync will be skipped"
+  fi
+else
+  echo "WARN: $DASH_REPO is not a git checkout — bug_list write/sync will fail"
+fi
 
 # 2. Run the scan (writes the AUTOSCAN block) and capture the full report.
-REPORT="$(/bin/bash scripts/ops/agents_server_diagnostic.sh all 2>&1)"
+REPORT="$(/bin/bash scripts/ops/agents_server_diagnostic.sh --bug-list "$BUG_LIST" all 2>&1)"
 echo "$REPORT"
 
 # 2.5 Archive untracked cruft from the hosts' /opt/openclaw checkouts (OB-7)
@@ -67,15 +84,17 @@ for H in 89.167.70.46 5.161.84.219; do
     || echo "WARN: gateway-image prune skipped for $H (ssh failed)"
 done
 
-# 3. Commit + push the refreshed bug list (only if it actually changed).
-if ! git diff --quiet scripts/ops/bug_list.md 2>/dev/null; then
-  git add scripts/ops/bug_list.md
-  git commit -q -m "ops: automated bug_list AUTOSCAN refresh $(date +%F)" \
-    && git push -q origin main \
-    && echo "→ bug_list.md committed + pushed" \
-    || echo "WARN: commit/push failed"
+# 3. Commit + push the refreshed bug list in the dashboard repo (only if it
+#    actually changed, and only from main — see the step-1 guard).
+if [[ "$(git -C "$DASH_REPO" branch --show-current 2>/dev/null)" == "main" ]] \
+   && ! git -C "$DASH_REPO" diff --quiet "$BUG_LIST_REL" 2>/dev/null; then
+  git -C "$DASH_REPO" add "$BUG_LIST_REL"
+  git -C "$DASH_REPO" commit -q -m "ops: automated bug_list AUTOSCAN refresh $(date +%F)" \
+    && git -C "$DASH_REPO" push -q origin main \
+    && echo "→ bug_list.md committed + pushed (dashboard repo)" \
+    || echo "WARN: commit/push failed (dashboard repo)"
 else
-  echo "→ bug_list.md unchanged; nothing to push"
+  echo "→ bug_list.md unchanged (or dashboard not on main); nothing to push"
 fi
 
 # 4. Email the report. Subject carries the P0..P3 totals at a glance.

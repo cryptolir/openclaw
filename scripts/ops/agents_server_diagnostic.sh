@@ -33,7 +33,7 @@
 #   ./agents_server_diagnostic.sh [options] [host ...]
 #     host            one or more of: eu  us  all      (default: all)
 #
-#   --bug-list PATH   path to bug_list.md   (default: alongside this script)
+#   --bug-list PATH   path to bug_list.md   (default: $DASH_REPO/docs/ops/bug_list.md)
 #   --no-write        print the report only; do not touch bug_list.md
 #   --since DURATION  gateway-log lookback for the scan (default: 30m)
 #   -h | --help       this help
@@ -61,7 +61,10 @@ WORKSPACE_DIR_WARN_MB=500 # MiB per-agent workspace/ dir → P1
 # ── Args ─────────────────────────────────────────────────────────────────────
 SELECT="" ; WRITE=1
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BUG_LIST="${SCRIPT_DIR}/bug_list.md"
+# bug_list.md moved to the private dashboard repo (2026-07-10). Default assumes
+# the dev-server layout (both checkouts side by side); override with --bug-list.
+DASH_REPO="${DASH_REPO:-/root/AgentGlob_Apps/openclaw-dashboard}"
+BUG_LIST="${DASH_REPO}/docs/ops/bug_list.md"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --bug-list) BUG_LIST="$2"; shift 2 ;;
