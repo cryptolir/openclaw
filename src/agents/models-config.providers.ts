@@ -709,11 +709,18 @@ export async function resolveImplicitProviders(params: {
     providers.synthetic = { ...buildSyntheticProvider(), apiKey: syntheticKey };
   }
 
-  const veniceKey =
-    resolveEnvApiKeyVarName("venice") ??
-    resolveApiKeyFromProfiles({ provider: "venice", store: authStore });
+  const veniceEnvVarName = resolveEnvApiKeyVarName("venice");
+  const veniceProfileKey = veniceEnvVarName
+    ? undefined
+    : resolveApiKeyFromProfiles({ provider: "venice", store: authStore });
+  const veniceKey = veniceEnvVarName ?? veniceProfileKey;
   if (veniceKey) {
-    const venice = await buildVeniceProvider(veniceKey);
+    // models.json stores the env var NAME (resolved at runtime), but the
+    // discovery request needs the real secret for its Authorization header.
+    const veniceDiscoveryKey = veniceEnvVarName
+      ? resolveEnvApiKey("venice")?.apiKey
+      : veniceProfileKey;
+    const venice = await buildVeniceProvider(veniceDiscoveryKey);
     providers.venice = { ...venice.provider, apiKey: veniceKey };
     veniceSource = venice.source;
   }
