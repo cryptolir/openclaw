@@ -3,6 +3,8 @@
 **Status:** Rev 5 (final) — folds Codex round 4; owner-approved to implementation
 **Repo:** `cryptolir/openclaw` (gateway). No dashboard code changes in this plan.
 
+## Revision log
+
 ### Rev 5: Codex round 4 + owner decision (2026-07-10)
 
 Round 4 hit the protocol's 4-round escalation bound. Owner decision: **fold as
