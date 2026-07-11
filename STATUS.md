@@ -7,6 +7,16 @@
 
 ## Last Session
 
+- **Date**: 2026-07-11 (dashboard: team-invite flow SHIPPED — plan #188 + impl #189, owner: Claude)
+- **Repo**: openclaw-dashboard (branches plan/team-invite-flow + feat/team-invite-flow, both squash-merged)
+- **What changed**:
+  - **Plan #188** (docs/plans/team-invite-flow.md, Rev 5): 4 Codex adversarial rounds folded (invite throttles, ?plan/?ref landing, HTML-escape, ref-only test split, sender-scoped quota); owner decision (b) at the round-4 bound.
+  - **Impl #189** (merged 0695b52): C1 invite email on genuinely-new member add (pure renderTeamInviteEmail, all fields escaped, recipient invite: throttle + sender invite-sender: quota cooldown0/cap30, response { ok, emailSent }); C2 signInGateAction pure gate — pre-invited NEW users no longer get an auto personal org, so first sign-in lands in the inviter org (root cause of "member can not see agents"); C2b ?plan/?ref landing creates the personal org on demand (planRefLanding); C3 add-member info icon + instructions + emailSent feedback; C4 label-only Members→Team. Impl Codex round 1 folded (I3 guard around the whole invite pipeline). Codex then STALLED (2 manual mentions, no response) — owner chose merge-now.
+- **Validation**: tsc clean, 296 node tests green (incl. new T1–T11), next build green; deploy.yml run 29147449823 auto-deploying at session end — verify Cloud Run + prod re-test (fresh invitee email) pending.
+- **Follow-ups**: prod verify the invite email + invitee landing; Codex GitHub connection may need reconnecting (chatgpt.com/codex/cloud/settings); AGENTS.md §4 still describes a limited "member" role that does not exist in WORKSPACE_CAPABILITIES (admin is near-co-owner) — decide whether to build a viewer role or fix the doc.
+
+## Last Session (prev)
+
 - **Date**: 2026-06-30 (deterministic durable-memory recall LIVE on `life` v2026.06.30.1, after a defective-build incident on v2026.06.27.1)
 - **What changed**:
   - **Gateway PR #90** (`feat/app-memory-recall-injection`): fixes QA 4A — a goal saved in one app chat wasn't recalled in a new chat. Root cause (verified): saving works (Graphiti `add_episode` succeeds; a live `search_memory_facts` returns the fact), but recall was **discretionary** — the slim app prompt often skipped `search_memory_facts` at the start of a new chat. New `src/agents/graphiti-recall-client.ts` (read-only `search_memory_facts` over streamable-HTTP MCP, mirrors the graphiti-proxy scope boundary: server-derived `groupId` only, unsafe-id fail-closed, `group_ids:[groupId]`, no caller `group_id`/`group_ids`/`center_node_uuid`) + `src/agents/memory-recall-context.ts` (`appendMemoryRecallBootstrapFile` — group id byte-identical to the `life-memory-scope` hook, ~2.5s timebox + fail-open, **no cross-turn cache** per codex P2) chained after `appendAppProfileBootstrapFile` in `bootstrap-files.ts`. Injects the top facts as a synthetic `MEMORY_RECALL.md` every app turn. Folded a codex review round (P1 scope boundary + P2 stale-cache). 27 vitest; `pnpm check` green.
