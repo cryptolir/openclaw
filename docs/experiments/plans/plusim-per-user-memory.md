@@ -1,6 +1,28 @@
 # Graphiti per-user memory for the Plusim app (`onlyclaw`, EU host)
 
-**Rev 3** · 2026-07-15 · status: **draft — BLOCKED, see F6**
+**Rev 4** · 2026-07-16 · status: **draft — BLOCKED, see F6**
+
+> **Rev 4 (folds Codex round 3).** Three findings, all landed.
+>
+> **P1 (T2 contradicted the design) — the sharpest catch of the loop.** Rev 3
+> made legacy 3-part keys fail closed but left **T2 still asserting they
+> resolve**. Implementing T2 as written would have forced re-accepting the
+> ambiguous 2-segment tail — **reopening F7-A**, the exact leak Rev 3 existed to
+> close. A test can re-open a hole the design just shut; T2 is now inverted.
+>
+> **P2 (charset conflation) → F8, confirmed by execution.** Rev 3's
+> validate-don't-coerce used `SAFE_APP_USER_ID = /^[a-z0-9_-]+$/` — the
+> **path-safe** charset for `users/<id>.md` _filenames_. Graphiti group ids are
+> **RediSearch-safe**, `[A-Za-z0-9_]`, no hyphen (graphiti-proxy.js:102,
+> `SAFE_GROUP_ID`, README §3). Two different constraints; I used the wrong one.
+> Rev 4 uses the group-id charset on both paths.
+>
+> **P1 (repeat, line 342) — a false positive I caused.** Codex re-flagged the
+> superseded Rev 2 parser, still sitting inline under a live heading. "Supersede,
+> don't delete" is right for _reasoning_ and wrong for _code_: a stale code block
+> reads as the spec. Deleted, with the reasoning kept in the Rev headers.
+
+**Rev 3** · 2026-07-15 · status: superseded by Rev 4
 
 > **Rev 3 (folds Codex round 2).** Round 2's P1 found **two holes in Rev 2's own
 > "strict" parser** — both confirmed by execution (**F7**): a namespaced key
@@ -321,31 +343,15 @@ const fromKey = appUserIdFromSessionKey(sessionKey);
 if (fromKey) return "app_" + sanitize(fromKey);
 ```
 
-**Rev 2: NOT ported verbatim — F5 killed that.** The helper's
-`split(":").filter(Boolean)` drops empty segments and shifts the index, bucketing
-malformed keys into `app_plusim`/`app_thread`. The hook validates **exact key
-shape** instead, treating an empty or extra segment as the malformed signal it is:
-
-```js
-const SAFE_ID = /^[a-z0-9_-]+$/;
-function appUserIdFromSessionKey(sessionKey) {
-  if (typeof sessionKey !== "string") return null;
-  const marker = sessionKey.lastIndexOf(":app:");
-  const tail =
-    marker !== -1
-      ? sessionKey.slice(marker + ":app:".length)
-      : sessionKey.startsWith("app:")
-        ? sessionKey.slice("app:".length)
-        : null;
-  if (!tail) return null;
-  const segments = tail.split(":"); // NO filter(Boolean) — an empty segment is a REJECT signal
-  if (segments.length !== 2 && segments.length !== 3) return null; // [<ns>:]<userId>:<conv>, exact
-  const conversationId = segments[segments.length - 1];
-  if (!conversationId) return null; // trailing colon => empty conversationId => malformed
-  const id = segments[segments.length - 2].trim().toLowerCase();
-  return SAFE_ID.test(id) ? id : null; // fail closed
-}
-```
+**Rev 2 (F5 fix) — ❌ REJECTED by Rev 3. Code deleted deliberately, see below.**
+Rev 2 replaced "port verbatim" with a segment-count check
+(`split(":")` without `filter(Boolean)`, exactly 2 or 3 segments, non-empty
+conversationId). **It leaked twice anyway (F7)** and must not be implemented.
+The code is removed rather than left inline: Codex re-flagged the stale block on
+round 3 as if it were the spec, which is exactly what a reader — human or bot —
+would do with a plausible-looking code block sitting under a live heading. The
+reasoning is preserved in the Rev 2 header note and in F5/F7; the _artefact_ is
+not, because a superseded parser is not history, it is a trap.
 
 **Rev 3: the block above was still inference, and F7 killed it. Replaced by:**
 
@@ -355,8 +361,11 @@ function appUserIdFromSessionKey(sessionKey) {
 // conversationId cannot masquerade as the legacy form (F7-A); [^:]+ so extra
 // segments cannot exist. Everything else → null → the hook blocks.
 //   agent:<agentId>:app:<namespace>:<userId>:<conversationId>
+// Rev 4/F8: the userId charset here is the GROUP-ID charset [a-z0-9_] (RediSearch-
+// safe, graphiti-proxy.js:102), NOT the path-safe [a-z0-9_-] used for users/<id>.md
+// filenames. A hyphen is legal in a filename and illegal in a group id.
 const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-const appKeyRe = (ns) => new RegExp(`^agent:[^:]+:app:${escapeRe(ns)}:([a-z0-9_-]+):[^:]+$`);
+const appKeyRe = (ns) => new RegExp(`^agent:[^:]+:app:${escapeRe(ns)}:([a-z0-9_]+):[^:]+$`);
 
 function appUserIdFromSessionKey(sessionKey, ns) {
   if (typeof sessionKey !== "string" || !ns) return null;
@@ -394,8 +403,35 @@ namespaced.
 **Same fix on the persisted-entry path (Rev 3).** `sanitize()` _coerces_: it maps
 every non-`[A-Za-z0-9_]` char to `_`, so `a:b` and `a_b` collapse into one group.
 Coercion invents an identity; validation refuses one. The entry path now validates
-(`/^[a-z0-9_-]+$/` after lowercasing, else null) instead of sanitising, matching the
-key path. T11 pins the collision.
+after lowercasing, else null, instead of sanitising, matching the key path. T11
+pins the collision.
+
+**Rev 4 / F8 — validate against the GROUP-ID charset `/^[a-z0-9_]+$/`, not the
+path-safe one.** Rev 3 used `SAFE_APP_USER_ID = /^[a-z0-9_-]+$/`
+(`app-profile-context.ts:96`), which exists to make `users/<id>.md` **filenames**
+safe. Graphiti group ids answer to a different authority — RediSearch — where
+`[A-Za-z0-9_]` is the whole alphabet and a hyphen is a syntax error
+(`graphiti-proxy.js:102`; `SAFE_GROUP_ID` at `graphiti-recall-client.ts:30`;
+README §3: _"Hyphens/colons break search"_). Dropping `sanitize()` without
+tightening the charset left the hyphen live. Executed:
+
+```
+user_abc   write=app_user_abc   proxy=accepts   read=app_user_abc    agree
+user-abc   write=app_user-abc   proxy=REJECTS   read=app_user_abc    ◀ DIVERGE
+```
+
+A hyphenated id therefore either fails at the proxy or writes one group and reads
+another — silently, which is the whole F8 failure mode. Worse, the read path's
+coercion is itself a collision: `appGroupIdFromUserId("user-abc")` and
+`…("user_abc")` both return **`app_user_abc`** — two distinct users, one graph.
+**PR2 therefore also stops `appGroupIdFromUserId()` coercing** (validate → null),
+so read and write reject the same inputs instead of inventing a shared bucket.
+
+With `/^[a-z0-9_]+$/` on both paths, hyphens fail closed everywhere and nothing
+real breaks: every live Clerk id is `user_` + alphanumerics — checked against the
+actual session stores (`user_3eodvckhcp3ivzlkerr03lddxde`,
+`user_3gaz4rid6bzjjykh0sdfusxgpza`, `user_3fdbitm00f5nkadidkurq2rv13b` all pass).
+T3 and T11 carry the hyphen cases.
 
 **Why the hook carries its own copy rather than importing the gateway's.** The
 hook already lazily imports `/app/src/gateway/session-utils.js`, so importing
@@ -509,17 +545,19 @@ namespace/leak boundary, landing them outside the standard suite would let the
 parser regress with CI green — the failure mode the tests exist to prevent.
 
 - **T1 (I3)** `"agent:main:app:plusim:user_abc:conv-uuid"` → `"user_abc"` — explicitly **not** `"plusim"`.
-- **T2 (I3)** legacy 3-part `"agent:main:app:user_abc:conv1"` → `"user_abc"`.
-- **T3 (I2)** hook `group_id` === `appGroupIdFromUserId(resolved)` for a mixed-case Clerk id (`user_3GAZ4rId6bZjJykh0sDFuSXgPZa`) — pins the lowercase asymmetry.
-- **T4 (I3)** a userId segment failing `/^[a-z0-9_-]+$/` → null (fail closed), not a coerced group.
+- **T2 (I3, F7-A) — INVERTED in Rev 4.** legacy 3-part `"agent:main:app:user_abc:conv1"` → **null**, NOT `"user_abc"`.
+  _Rev 3 changed the design to fail legacy keys closed but left this test asserting the old behaviour. Implementing T2 as written would force the parser to re-accept the ambiguous 2-segment tail — reopening F7-A. A stale test can re-open the hole its own revision just shut; that is what this row now guards against._
+- **T3 (I2)** hook `group_id` === `appGroupIdFromUserId(resolved)` for a mixed-case Clerk id (`user_3GAZ4rId6bZjJykh0sDFuSXgPZa`) — pins the lowercase asymmetry. **(Rev 4/F8)** plus a hyphen case: `"user-abc"` → **null on both paths**, never `app_user-abc` (proxy-rejected) or `app_user_abc` (diverged).
+- **T4 (I3)** a userId segment failing `/^[a-z0-9_]+$/` → null (fail closed), not a coerced group.
 - **T5 (I3, F5)** trailing colon `"agent:main:app:plusim:user_abc:"` → **null**, not `"plusim"`.
 - **T6 (I3, F5)** extra segment `"agent:main:app:plusim:user_abc:thread:1"` → **null**, not `"thread"`.
 - **T7 (I3, F5)** empty interior segment (`"…:app:plusim::conv"`) → **null**.
 - **T8 (I3, F7-A)** missing conversationId `"agent:main:app:plusim:user_abc"` → **null**, not `"plusim"`. _Rev 2 returned the shared bucket here._
 - **T9 (I3, F7-B)** appended marker `"agent:main:app:plusim:user_abc:conv:app:user_victim:x"` → **null**, not `"user_victim"`. _The crafted-impersonation case; must hold even with F6 fixed._
 - **T10 (I3, F7-A)** a key with the **wrong** namespace (`"agent:main:app:havaya:user_abc:conv"` on an agent pinned to `plusim`) → **null**. Pins that the namespace is checked, not merely skipped over.
-- **T11 (I1, Rev 3)** the persisted-entry path **validates and does not coerce**: `appUserId` values `"a:b"` and `"a_b"` must not collapse to the same group — the unsafe one resolves to **null**, not to `app_a_b`.
+- **T11 (I1, Rev 3 + F8)** the persisted-entry path **validates and does not coerce**: `appUserId` values `"a:b"` and `"a_b"` must not collapse to the same group — the unsafe one resolves to **null**, not `app_a_b`. **(Rev 4)** same for `"user-abc"` vs `"user_abc"`, and `appGroupIdFromUserId()` itself must return **null** for a hyphenated id rather than coercing it into another user's group.
 - **T12 (F5 drift guard)** the hook's copy and the source helper agree on every row of T1–T11 — the duplication in §3.3 cannot silently diverge.
+- **T12b (I2, F8)** every id accepted by the write path is accepted by the proxy's `/^[A-Za-z0-9_]+$/` (graphiti-proxy.js:102) — no id can pass validation and then be rejected at the wire. _(Suffixed rather than renumbering T13–T22 again: the last renumber silently dropped a row, and churning stable ids to satisfy tidiness is how that happens.)_
 
 Live smoke (deploy gate, mirrors `ops/graphiti-life/recall2.sh`):
 
