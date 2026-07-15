@@ -1,6 +1,18 @@
 # Graphiti per-user memory for the Plusim app (`onlyclaw`, EU host)
 
-**Rev 1** · 2026-07-15 · status: **draft, for adversarial review**
+**Rev 2** · 2026-07-15 · status: **draft — BLOCKED, see F6**
+
+> **Rev 2 (folds Codex round 1).** Codex P1 → **F5** (verified: the parser buckets
+> malformed keys into `app_plusim`/`app_thread` instead of failing closed) → §3.3
+> now specifies exact key-shape validation, and T1–T4 grew to T1–T8. Codex P2 →
+> tests move from `node:test` to **Vitest** (§5), the repo's actual validation path.
+> Chasing P1's premise past the malformed case surfaced **F6**: the public chat
+> endpoint is unauthenticated and takes `sessionKey`/`appUserId` from the request
+> body, so a **well-formed crafted key** defeats I1 outright — strict parsing does
+> not touch it. **This plan is now blocked on F6**, which is also a live issue for
+> `life`/Havaya today (§9). Rev 1 text is superseded inline, not deleted.
+
+**Rev 1** · 2026-07-15 · status: draft, for adversarial review
 
 Give Plusim (https://plusim.xyz) app users durable, per-user memory — the same
 capability `life`/Havaya has — by standing up a Graphiti stack on the EU host and
@@ -119,6 +131,66 @@ have been running with no resolved identity) · `OPENAI_API_KEY` present
 A naive `>>` append concatenates onto the `OPENAI_API_KEY` line and corrupts it.
 This plan does not append to `docker.env`; recorded so the deploy step never does.
 
+**F5 — The parser buckets malformed keys instead of failing closed.**
+_(Codex round 1, P1 — confirmed by execution, not by reading.)_ Rev 1 said to port
+`appUserIdFromSessionKey` (`src/agents/app-profile-context.ts:114-134`) verbatim.
+That helper does `split(":").filter(Boolean)` and takes the second-to-last
+segment. `filter(Boolean)` **silently drops empty segments**, which shifts the
+index — so a malformed key does not fail closed, it lands in a shared bucket:
+
+```
+agent:main:app:plusim:user_abc:conv-uuid  → app_user_abc     (legit)
+agent:main:app:plusim:user_abc:           → app_plusim       ← every Plusim user, one graph
+agent:main:app:plusim:user_abc:thread:1   → app_thread       ← shared across users
+agent:main:app:user_abc:conv1             → app_user_abc     (legacy 3-part, legit)
+```
+
+Both bad rows pass the `/^[a-z0-9_-]+$/` check. The exact leak Rev 1 claimed to
+have designed out, reachable through a _different_ door than the one it guarded.
+§3.3 replaces "port verbatim" with exact key-shape validation.
+
+**F6 — Identity is client-supplied: the public chat endpoint has no auth.**
+_(Found by chasing P1's premise — "can a session key be shaped to write into
+another user's group?" — past the malformed case.)_ Strict parsing (F5) fixes
+_accidental_ collisions. It does nothing about a **well-formed** crafted key:
+
+```
+agent:main:app:plusim:user_victim:x  → app_user_victim   ← well-formed, strict-parser-clean
+```
+
+That only matters if a caller can choose the key. **It can.** In
+`openclaw-dashboard` `app/api/public/chat/[agentName]/route.ts`:
+
+```ts
+// line 17
+// Public endpoint — no auth required. Returns only safe display fields.
+...
+const sessionKey = body.sessionKey?.trim() || `anon:${agentName}:main`;      // line 70
+const appUserId = typeof body.appUserId === "string" ? body.appUserId.trim() : undefined;  // line 71
+```
+
+The only gates are: agent exists, workspace not suspended, agent running, no
+slash commands, and model plan-gating. **No caller identity of any kind.** This
+was verified inadvertently while measuring F2 — the smoke test that proved the
+turn-1 bug was an unauthenticated `curl` supplying both `sessionKey` and
+`appUserId`, and it worked.
+
+So anyone who knows a Clerk userId can POST as that user and have the agent
+recall their memories back (`memory-recall-context.ts` injects
+`MEMORY_RECALL.md` from exactly this id) or write poisoned facts into their graph.
+Clerk ids are 27 random chars and not enumerable — a real mitigation — but they
+are **identifiers, not secrets**, and leak through URLs, logs, and support flows.
+
+The platform has already made the opposite call one endpoint over: the
+**user-file** route (`app/api/public/chat/[agentName]/user-file/route.ts:5,40,48`)
+requires `Authorization: Bearer {AGENTGLOB_APP_API_KEY}` to read a user's file.
+Reading a user's file needs a key; driving a chat that injects that same user's
+memories needs nothing. Plusim **already holds** `AGENTGLOB_APP_API_KEY`.
+
+**This blocks the plan.** Per-user memory whose identity is attacker-supplied is
+not per-user memory; shipping §3 on top of F6 would ship I1 as a fiction. The fix
+lives in `openclaw-dashboard`, not here — see §7 and §9.
+
 ---
 
 ## 3. Design
@@ -209,9 +281,48 @@ const fromKey = appUserIdFromSessionKey(sessionKey);
 if (fromKey) return "app_" + sanitize(fromKey);
 ```
 
-`appUserIdFromSessionKey` is ported verbatim in behaviour from
-`app-profile-context.ts:114-134`: take the tail after the last `:app:`, split on
-`:`, take the **second-to-last** segment, validate against `/^[a-z0-9_-]+$/`.
+**Rev 2: NOT ported verbatim — F5 killed that.** The helper's
+`split(":").filter(Boolean)` drops empty segments and shifts the index, bucketing
+malformed keys into `app_plusim`/`app_thread`. The hook validates **exact key
+shape** instead, treating an empty or extra segment as the malformed signal it is:
+
+```js
+const SAFE_ID = /^[a-z0-9_-]+$/;
+function appUserIdFromSessionKey(sessionKey) {
+  if (typeof sessionKey !== "string") return null;
+  const marker = sessionKey.lastIndexOf(":app:");
+  const tail =
+    marker !== -1
+      ? sessionKey.slice(marker + ":app:".length)
+      : sessionKey.startsWith("app:")
+        ? sessionKey.slice("app:".length)
+        : null;
+  if (!tail) return null;
+  const segments = tail.split(":"); // NO filter(Boolean) — an empty segment is a REJECT signal
+  if (segments.length !== 2 && segments.length !== 3) return null; // [<ns>:]<userId>:<conv>, exact
+  const conversationId = segments[segments.length - 1];
+  if (!conversationId) return null; // trailing colon => empty conversationId => malformed
+  const id = segments[segments.length - 2].trim().toLowerCase();
+  return SAFE_ID.test(id) ? id : null; // fail closed
+}
+```
+
+Exactly two shapes are legal — 3 segments (`<namespace>:<userId>:<conversationId>`)
+and 2 (legacy `<userId>:<conversationId>`). Everything else returns null and the
+hook blocks. T1–T8 pin every row of the F5 table.
+
+**Why the hook carries its own copy rather than importing the gateway's.** The
+hook already lazily imports `/app/src/gateway/session-utils.js`, so importing
+`app-profile-context.js` and calling the real helper would be the obvious
+de-duplication — and it would be wrong here: `onlyclaw` runs `v2026.07.10.1`,
+whose helper **is** the loose one. Importing it would inherit F5 until a fleet
+image rebuild. The hook's copy is strict today, with no rebuild.
+
+The same F5 looseness still sits in the **source** helper, which feeds the read
+path (`app-profile-context` and `memory-recall-context`). PR2 fixes it there too,
+shipping on the next image — **sequenced, not blocking**: with a strict write
+hook, no wrong-group write ever happens, so a loose read of `app_plusim` returns
+an empty graph. T8 asserts the two copies agree, so the duplication cannot drift.
 
 **Why second-to-last and not "the segment after `:app:`":** Plusim's key is the
 namespaced 4-part form `app:plusim:<userId>:<conversationId>`. A naive
@@ -278,7 +389,16 @@ financial-guidance voice, modelled on `ops/graphiti-life/agents-md-memory-sectio
 - **I2 — Write/read group_id identity.** The hook's `group_id` is byte-identical to
   `appGroupIdFromUserId()`'s for the same user, on turn 1 and turn N.
 - **I3 — Namespace is not identity.** `app:plusim:<userId>:<conv>` resolves to
-  `app_<userId>`, never `app_plusim`.
+  `app_<userId>`, never `app_plusim`. **(Rev 2)** And a malformed key resolves to
+  **nothing** — never to a shared bucket (`app_plusim`, `app_thread`). Exactly two
+  key shapes are legal; every other shape fails closed.
+- **I9 — Identity is server-authenticated, not client-asserted. (Rev 2, F6 — the
+  one that currently fails.)** No unauthenticated caller may choose the
+  `appUserId` or the `app:` session key that scopes memory. Any request carrying
+  either must prove it speaks for the app (`AGENTGLOB_APP_API_KEY`, as the
+  user-file route already requires). Without this, I1 is decorative: a
+  well-formed crafted key is indistinguishable from a real one, and no amount of
+  parser strictness helps.
 - **I4 — Telegram unaffected.** No `dmScope` change; onlyclaw's Telegram sessions
   behave exactly as today, and memory tools fail closed for them (app-only scope).
 - **I5 — No destructive surface.** `clear_graph`, `delete_entity_edge`,
@@ -291,24 +411,37 @@ financial-guidance voice, modelled on `ops/graphiti-life/agents-md-memory-sectio
 
 ## 5. Test list — every review finding must land here as a named test
 
-Pure/unit (`node:test`, shipped with PR2 — no host, no SDK):
+Pure/unit — **Vitest, not `node:test` (Rev 2, Codex P2).** `pnpm test` runs
+`scripts/test-parallel.mjs`, which invokes the Vitest configs; `node:test` files
+are invisible to it. Since these are the **only** automated guard on the
+namespace/leak boundary, landing them outside the standard suite would let the
+parser regress with CI green — the failure mode the tests exist to prevent.
 
-- **T1 (I3)** `appUserIdFromSessionKey("agent:main:app:plusim:user_abc:conv1")` === `"user_abc"` — explicitly **not** `"plusim"`.
-- **T2 (I3)** legacy 3-part `"agent:main:app:user_abc:conv1"` === `"user_abc"`.
+- **T1 (I3)** `"agent:main:app:plusim:user_abc:conv-uuid"` → `"user_abc"` — explicitly **not** `"plusim"`.
+- **T2 (I3)** legacy 3-part `"agent:main:app:user_abc:conv1"` → `"user_abc"`.
 - **T3 (I2)** hook `group_id` === `appGroupIdFromUserId(resolved)` for a mixed-case Clerk id (`user_3GAZ4rId6bZjJykh0sDFuSXgPZa`) — pins the lowercase asymmetry.
-- **T4 (I3)** a key whose userId segment fails `/^[a-z0-9_-]+$/` resolves to null (fail closed), not to a coerced group.
+- **T4 (I3)** a userId segment failing `/^[a-z0-9_-]+$/` → null (fail closed), not a coerced group.
+- **T5 (I3, F5)** trailing colon `"agent:main:app:plusim:user_abc:"` → **null**, not `"plusim"`.
+- **T6 (I3, F5)** extra segment `"agent:main:app:plusim:user_abc:thread:1"` → **null**, not `"thread"`.
+- **T7 (I3, F5)** empty interior segment (`"…:app:plusim::conv"`) → **null**.
+- **T8 (F5 drift guard)** the hook's copy and the source helper agree on every row of T1–T7 — the duplication in §3.3 cannot silently diverge.
 
 Live smoke (deploy gate, mirrors `ops/graphiti-life/recall2.sh`):
 
-- **T5 (F2/I2)** turn 1 of a brand-new session writes memory successfully — the measured regression.
-- **T6 (I1)** two users' writes land in different groups; user A's search never returns user B's fact.
-- **T7 (I5)** `tools/list` through the proxy exposes only `add_memory`, `search_memory_facts`, `search_nodes`, `get_episodes`.
-- **T8 (I1)** a model-supplied `group_id`/`group_ids` argument is overridden by the pinned value.
-- **T9 (I1)** a proxy call with no `__group_id` is refused.
-- **T10 (I4)** a Telegram session's `mcp__graphiti__*` call is blocked.
-- **T11 (I6)** with graphiti-mcp stopped, a chat turn still completes.
-- **T12 (I7)** `ss -lntp` shows `:8000` bound to `172.17.0.1` only; falkordb unpublished.
-- **T13** after `docker compose up -d --force-recreate` of `onlyclaw`, it still resolves `graphiti-mcp` — the PR #59 network-join regression.
+- **T9 (F2/I2)** turn 1 of a brand-new session writes memory successfully — the measured regression.
+- **T10 (I1)** two users' writes land in different groups; user A's search never returns user B's fact.
+- **T11 (I5)** `tools/list` through the proxy exposes only `add_memory`, `search_memory_facts`, `search_nodes`, `get_episodes`.
+- **T12 (I1)** a model-supplied `group_id`/`group_ids` argument is overridden by the pinned value.
+- **T13 (I1)** a proxy call with no `__group_id` is refused.
+- **T14 (I4)** a Telegram session's `mcp__graphiti__*` call is blocked.
+- **T15 (I6)** with graphiti-mcp stopped, a chat turn still completes.
+- **T16 (I7)** `ss -lntp` shows `:8000` bound to `172.17.0.1` only; falkordb unpublished.
+- **T17** after `docker compose up -d --force-recreate` of `onlyclaw`, it still resolves `graphiti-mcp` — the PR #59 network-join regression.
+- **T18 (I9, F6 — the deploy gate)** an **unauthenticated** POST to
+  `/api/public/chat/onlyclaw` carrying `appUserId` or an `app:` session key is
+  **rejected**. This is the exact `curl` that succeeded while measuring F2; it
+  must fail before memory is enabled. Its counterpart: the same request **with**
+  a valid `AGENTGLOB_APP_API_KEY` still succeeds, so Plusim keeps working.
 
 ## 6. Deliberately NOT building
 
@@ -322,14 +455,25 @@ Live smoke (deploy gate, mirrors `ops/graphiti-life/recall2.sh`):
 
 ## 7. Sequencing
 
+**Rev 2: step 0 is new and is a hard gate.** Everything below it is inert until
+F6 is closed — sequencing, not preference (§9).
+
+0. **BLOCKER — close F6 in `openclaw-dashboard` (owner call; separate plan/PR in
+   that repo).** Require `AGENTGLOB_APP_API_KEY` on any `/api/public/chat/*`
+   request carrying `appUserId` or an `app:` session key, mirroring the user-file
+   route's existing bearer check. This is a **public-surface authorization
+   change**, so it earns its own plan-review loop rather than riding this one —
+   and it needs a compatibility decision the owner owns: which callers other than
+   Plusim/Havaya post `appUserId` today, and does requiring a key break them?
 1. **PR1 (this doc)** — plan only.
-2. **PR2** — three edits, no host changes: the §3.3 fallback in
-   `life-memory-scope/index.js`; the two interpolated vars in
-   `ops/graphiti-life/docker-compose.yml` + `.env.example`; T1–T4 as `node:test`.
-3. **Deploy to `onlyclaw` (ask-first — infra, §Act-vs-ask)** — stack up on EU →
-   copy proxy + hook, perms → `openclaw.json` → `AGENTS.md` → smoke T5–T13. Per the
-   deploy protocol, host changes land in git in the same task, with
-   `.bak.pre-graphiti` backups.
+2. **PR2** — no host changes: the §3.3 **strict** parser + fallback in
+   `life-memory-scope/index.js`; the same strictness in the source helper
+   (`app-profile-context.ts`, rides the next image); the two interpolated vars in
+   `ops/graphiti-life/docker-compose.yml` + `.env.example`; T1–T8 as **Vitest**.
+3. **Deploy to `onlyclaw` (ask-first — infra, §Act-vs-ask)** — gated on step 0,
+   verified by **T18**. Stack up on EU → copy proxy + hook, perms →
+   `openclaw.json` → `AGENTS.md` → smoke T9–T17. Per the deploy protocol, host
+   changes land in git in the same task, with `.bak.pre-graphiti` backups.
 4. **Deploy the same fix to `life` (ask-first, separate)** — closes life's turn-1
    gap. Deliberately not bundled: one prod agent per change.
 
@@ -341,6 +485,23 @@ Live smoke (deploy gate, mirrors `ops/graphiti-life/recall2.sh`):
 
 ## 9. Open risks (surfaced, not hidden)
 
+- **F6 is not hypothetical for `life` — it is live today. (Rev 2, owner
+  escalation.)** This plan can simply wait. `life`/Havaya cannot: it has durable
+  per-user memory **and** server-side recall injection running in production right
+  now, behind the same unauthenticated endpoint. Anyone holding a Havaya user's
+  Clerk id can POST as them and have the agent read that user's memories back —
+  no key, no session, no allowlist. The route is shared, so the exposure is a
+  property of the endpoint, not of `onlyclaw`.
+  **Confidence and its limits:** the mechanism is confirmed from the route source
+  (`route.ts:17,70,71`) and from an unauthenticated `curl` against **`onlyclaw`**
+  that returned a reply while supplying both `sessionKey` and `appUserId`. It has
+  **deliberately not been demonstrated against `life`** — doing so means reading a
+  real person's memories, which is the breach, not a test. If the owner wants
+  proof before acting, the safe form is a POST with a **synthetic** appUserId that
+  belongs to nobody: a reply confirms reachability without touching anyone's data.
+  **Mitigating:** Clerk ids are 27 random chars, not enumerable. **Aggravating:**
+  they are identifiers, not secrets, and the platform already treats this exact id
+  as needing a bearer key one route over (user-file).
 - **EU memory pressure.** 1660 MiB available but **1887 MiB of swap already in
   use**. +74 MiB is noise today, but FalkorDB grows with the graph, and the OB-9
   rescale decision is already flagged DUE with the owner. This plan does not
