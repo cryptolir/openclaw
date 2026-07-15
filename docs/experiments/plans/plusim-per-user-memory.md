@@ -1,6 +1,30 @@
 # Graphiti per-user memory for the Plusim app (`onlyclaw`, EU host)
 
-**Rev 4** · 2026-07-16 · status: **draft — BLOCKED, see F6**
+**Rev 5** · 2026-07-16 · status: **approved by owner to proceed to implementation — DEPLOY still BLOCKED on F6**
+
+> **Rev 5 (owner decision, 2026-07-16 — fold loop stopped at the §3c round bound).**
+> Round 4 returned two findings, both valid, both "the doc contradicts itself":
+> the §3.3 call site still passed no `appNamespace` (so the fallback would have
+> been a silent no-op — F2 unfixed) and still called `sanitize()`; and a stale
+> paragraph still taught second-to-last positional parsing. Neither disputed the
+> design.
+>
+> **That is the signal.** Rounds 1–2 attacked the parser and found real leaks
+> (F5, F7). Rounds 3–4 found my own **debris** — a superseded code block, a test
+> row asserting a removed behaviour, a call site with the old signature, a
+> paragraph describing the old algorithm. The design converged at Rev 3/4; the
+> document didn't. Root cause: the "supersede inline, don't delete" convention,
+> which is right for reasoning and wrong for code.
+>
+> Rev 5 is a consistency pass, not a design change: §3.3 now states **only the
+> current design**, with all history in these Rev headers. The sweep found **six**
+> stale artefacts — the two Codex named, plus a reference to the block Rev 4
+> deleted, a test number that had moved (T8 → T12), and a byte-identity rationale
+> still describing the `sanitize()` Rev 4 removed. Owner decision: fold this final
+> rev and move to implementation; the impl PR gets its own full adversarial review,
+> where the code is the artefact rather than a description of it.
+
+**Rev 4** · 2026-07-15 · status: superseded by Rev 5
 
 > **Rev 4 (folds Codex round 3).** Three findings, all landed.
 >
@@ -322,53 +346,41 @@ found" otherwise), and `openclaw.plugin.json` **must** carry a `configSchema` ke
 or the gateway crash-loops with "Invalid config". Both gotchas are from
 `ops/graphiti-life/CUTOVER.md` and cost hours the first time.
 
-### 3.3 The F2 fix — one line, in the existing file, fixing the root cause
+### 3.3 The F2 fix — turn-1 fallback, with validated identity
+
+> **Rev 5 (consistency pass).** This section is rewritten to state **only the
+> current design**. Rev 1–4 left four superseded parsers, call sites and rationales
+> stacked here, and rounds 3–4 of review were spent on that debris rather than on
+> the design — a stale code block reads as the spec. The reasoning history lives in
+> the Rev headers at the top of this doc, which is the right place for it. Nothing
+> below is superseded; if it is here, it is what PR2 implements.
 
 **No new plugin, no fork.** The bug is in
-`ops/graphiti-life/extensions/life-memory-scope/index.js` and it is the _same_ bug
+`ops/graphiti-life/extensions/life-memory-scope/index.js`, and it is the _same_ bug
 for both agents — `life` has been dropping turn-1 memory writes for weeks (64 of
-175 app sessions carry `appUserId`; the other 111 are turn-1-only). Fixing it
-where both callers route through is both the correct fix and the smaller diff.
+175 app sessions carry `appUserId`; the other 111 are turn-1-only). Fixing it where
+both callers route through is both the correct fix and the smaller diff.
 
-Add to `resolveGroupId()`, **after** the persisted-entry attempt and **before**
-the fail-closed return:
+#### The parser
 
-```js
-// Fallback: derive the appUserId from the session KEY when chat.send has not
-// persisted it yet (turn 1 of a new conversation — see chat.ts:809-821).
-// Mirrors src/agents/app-profile-context.ts:114-134 so the write path resolves
-// the SAME id the read path already does. Same-user and read-only: the id comes
-// from this very session's key, so it can never surface another user's memory.
-const fromKey = appUserIdFromSessionKey(sessionKey);
-if (fromKey) return "app_" + sanitize(fromKey);
-```
-
-**Rev 2 (F5 fix) — ❌ REJECTED by Rev 3. Code deleted deliberately, see below.**
-Rev 2 replaced "port verbatim" with a segment-count check
-(`split(":")` without `filter(Boolean)`, exactly 2 or 3 segments, non-empty
-conversationId). **It leaked twice anyway (F7)** and must not be implemented.
-The code is removed rather than left inline: Codex re-flagged the stale block on
-round 3 as if it were the spec, which is exactly what a reader — human or bot —
-would do with a plausible-looking code block sitting under a live heading. The
-reasoning is preserved in the Rev 2 header note and in F5/F7; the _artefact_ is
-not, because a superseded parser is not history, it is a trap.
-
-**Rev 3: the block above was still inference, and F7 killed it. Replaced by:**
+Identity is **validated against one known shape**, never inferred from the string.
+Anchored `^...$` so an appended `:app:` cannot shift the match (F7-B); namespace
+pinned from config so a missing conversationId cannot masquerade as the legacy form
+(F7-A); `[^:]+` conversationId so extra segments cannot exist; group-id charset so
+the accepted set matches what the proxy and RediSearch accept (F8).
 
 ```js
-// The agent knows exactly ONE legal key shape. Anchored ^...$ so an appended
-// ":app:" cannot shift the match (F7-B); namespace pinned so a missing
-// conversationId cannot masquerade as the legacy form (F7-A); [^:]+ so extra
-// segments cannot exist. Everything else → null → the hook blocks.
+// Charset note (F8): the userId charset here is the GROUP-ID charset [a-z0-9_]
+// (RediSearch-safe; graphiti-proxy.js:102, SAFE_GROUP_ID at
+// graphiti-recall-client.ts:30), NOT the path-safe [a-z0-9_-] of
+// app-profile-context.ts:96 — that one exists to make users/<id>.md a legal
+// FILENAME. A hyphen is legal in a filename and a syntax error in a group id.
 //   agent:<agentId>:app:<namespace>:<userId>:<conversationId>
-// Rev 4/F8: the userId charset here is the GROUP-ID charset [a-z0-9_] (RediSearch-
-// safe, graphiti-proxy.js:102), NOT the path-safe [a-z0-9_-] used for users/<id>.md
-// filenames. A hyphen is legal in a filename and illegal in a group id.
 const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const appKeyRe = (ns) => new RegExp(`^agent:[^:]+:app:${escapeRe(ns)}:([a-z0-9_]+):[^:]+$`);
 
 function appUserIdFromSessionKey(sessionKey, ns) {
-  if (typeof sessionKey !== "string" || !ns) return null;
+  if (typeof sessionKey !== "string" || !ns) return null; // no namespace => no fallback
   const m = sessionKey.match(appKeyRe(ns));
   return m ? m[1].toLowerCase() : null;
 }
@@ -378,107 +390,92 @@ Verified against every known bad shape — executed, not reasoned:
 
 ```
 agent:main:app:plusim:user_abc:conv-uuid              → app_user_abc  (legit)
-agent:main:app:plusim:user_abc                        → null ✓  (F7-A: was app_plusim)
-agent:main:app:plusim:user_abc:conv:app:user_victim:x → null ✓  (F7-B: was app_user_victim)
-agent:main:app:plusim:user_abc:                       → null ✓
-agent:main:app:plusim:user_abc:thread:1               → null ✓
-agent:main:app:user_abc:conv1                         → null ✓  (legacy — now fails CLOSED)
+agent:main:app:plusim:user_abc                        → null ✓  (F7-A: missing conversationId)
+agent:main:app:plusim:user_abc:conv:app:user_victim:x → null ✓  (F7-B: appended marker)
+agent:main:app:plusim:user_abc:                       → null ✓  (trailing colon)
+agent:main:app:plusim:user_abc:thread:1               → null ✓  (extra segment)
+agent:main:app:havaya:user_abc:conv                   → null ✓  (wrong namespace)
+agent:main:app:user_abc:conv1                         → null ✓  (legacy — fails CLOSED)
+user-abc  (as a userId, either path)                  → null ✓  (F8: hyphen)
 ```
 
-**Why the namespace must come from config, not from the key.** A 2-segment tail
-`plusim:user_abc` is structurally identical to a legacy `<userId>:<conversationId>`
-— nothing _in the key_ separates "namespaced, conversationId missing" from
-"legacy, conversationId present". No parser resolves that; only knowing the
-expected namespace does. So `plugins.entries.life-memory-scope.config.appNamespace`
-= `"plusim"` for onlyclaw (§3.4), carried in the `configSchema` the plugin must
-have anyway. Not speculative flexibility — the minimum fact needed to parse
-unambiguously.
+#### The call site
 
-**Legacy 3-part keys now fail closed — deliberate.** `life` has 111 legacy-form
-sessions. They lose only the _turn-1_ fallback (their entries carry `appUserId`
-from turn 2 on, the primary path), and they fail **closed**: a blocked write, never
-a wrong group. For Plusim it is moot — every key `makeSessionKey()` mints is
-namespaced.
+In `resolveGroupId()`, **after** the persisted-entry attempt and **before** the
+fail-closed return. It passes the configured namespace, and it does **not**
+sanitise — the parser already returns a validated, group-safe, lowercased id:
 
-**Same fix on the persisted-entry path (Rev 3).** `sanitize()` _coerces_: it maps
-every non-`[A-Za-z0-9_]` char to `_`, so `a:b` and `a_b` collapse into one group.
-Coercion invents an identity; validation refuses one. The entry path now validates
-after lowercasing, else null, instead of sanitising, matching the key path. T11
-pins the collision.
-
-**Rev 4 / F8 — validate against the GROUP-ID charset `/^[a-z0-9_]+$/`, not the
-path-safe one.** Rev 3 used `SAFE_APP_USER_ID = /^[a-z0-9_-]+$/`
-(`app-profile-context.ts:96`), which exists to make `users/<id>.md` **filenames**
-safe. Graphiti group ids answer to a different authority — RediSearch — where
-`[A-Za-z0-9_]` is the whole alphabet and a hyphen is a syntax error
-(`graphiti-proxy.js:102`; `SAFE_GROUP_ID` at `graphiti-recall-client.ts:30`;
-README §3: _"Hyphens/colons break search"_). Dropping `sanitize()` without
-tightening the charset left the hyphen live. Executed:
-
-```
-user_abc   write=app_user_abc   proxy=accepts   read=app_user_abc    agree
-user-abc   write=app_user-abc   proxy=REJECTS   read=app_user_abc    ◀ DIVERGE
+```js
+// Turn-1 fallback: chat.send patches only an EXISTING entry (chat.ts:809-821),
+// so the id is absent on the first message of every new conversation.
+// Same-user by construction: the id comes from this session's own key.
+const fromKey = appUserIdFromSessionKey(sessionKey, cfg.appNamespace);
+if (fromKey) return "app_" + fromKey; // already validated + lowercased; no sanitize()
 ```
 
-A hyphenated id therefore either fails at the proxy or writes one group and reads
-another — silently, which is the whole F8 failure mode. Worse, the read path's
-coercion is itself a collision: `appGroupIdFromUserId("user-abc")` and
-`…("user_abc")` both return **`app_user_abc`** — two distinct users, one graph.
-**PR2 therefore also stops `appGroupIdFromUserId()` coercing** (validate → null),
-so read and write reject the same inputs instead of inventing a shared bucket.
+#### Why the namespace must come from config, not the key
 
-With `/^[a-z0-9_]+$/` on both paths, hyphens fail closed everywhere and nothing
-real breaks: every live Clerk id is `user_` + alphanumerics — checked against the
-actual session stores (`user_3eodvckhcp3ivzlkerr03lddxde`,
+A 2-segment tail `plusim:user_abc` is structurally identical to a legacy
+`<userId>:<conversationId>`. Nothing _in the key_ separates "namespaced,
+conversationId missing" from "legacy, conversationId present" — no parser resolves
+that ambiguity, only knowing the expected namespace does. So
+`plugins.entries.life-memory-scope.config.appNamespace` = `"plusim"` (§3.4),
+declared in the `configSchema` the plugin must carry anyway. **Absent or empty
+`appNamespace` ⇒ no session-key fallback at all** (the persisted-entry path still
+works). Not speculative flexibility: the minimum fact needed to parse unambiguously.
+
+#### Legacy 3-part keys fail closed — deliberate
+
+`life` has 111 legacy-form sessions. They lose only the _turn-1_ fallback (their
+entries carry `appUserId` from turn 2 on, the primary path), and they fail
+**closed**: a blocked write, never a wrong group. Moot for Plusim — every key
+`makeSessionKey()` mints is namespaced.
+
+#### The persisted-entry path validates too
+
+`sanitize()` _coerces_: it maps every non-`[A-Za-z0-9_]` char to `_`, so `a:b` and
+`a_b` — and `user-abc` and `user_abc` — collapse into one group. Coercion invents an
+identity; validation refuses one. The entry path lowercases then validates against
+`/^[a-z0-9_]+$/`, else null. **PR2 also stops `appGroupIdFromUserId()` coercing**
+(`memory-recall-context.ts:46-48`), so read and write reject the same inputs rather
+than inventing a shared bucket. T11/T12b pin this.
+
+Nothing real breaks: every live Clerk id is `user_` + alphanumerics — checked
+against the actual session stores (`user_3eodvckhcp3ivzlkerr03lddxde`,
 `user_3gaz4rid6bzjjykh0sdfusxgpza`, `user_3fdbitm00f5nkadidkurq2rv13b` all pass).
-T3 and T11 carry the hyphen cases.
 
-**Why the hook carries its own copy rather than importing the gateway's.** The
-hook already lazily imports `/app/src/gateway/session-utils.js`, so importing
+#### Byte-identity invariant (I2)
+
+The hook's `group_id` must be byte-identical to `appGroupIdFromUserId()`'s for the
+same user. Once both validate against `/^[a-z0-9_]+$/` and neither coerces, they
+agree by construction: the accepted set is identical and the transform is
+`"app_" + id`. If they ever diverge, the agent writes to one graph and reads from
+another — a silent, total memory failure with no error. **T3** pins it, including
+the mixed-case Clerk id (`user_3GAZ4rId6bZjJykh0sDFuSXgPZa`) and the hyphen case.
+
+#### Why the hook carries its own copy
+
+The hook already lazily imports `/app/src/gateway/session-utils.js`, so importing
 `app-profile-context.js` and calling the real helper would be the obvious
-de-duplication — and it would be wrong here: `onlyclaw` runs `v2026.07.10.1`,
-whose helper **is** the loose one. Importing it would inherit F5 until a fleet
-image rebuild. The hook's copy is strict today, with no rebuild.
+de-duplication — and it would be wrong: `onlyclaw` runs `v2026.07.10.1`, whose
+helper **is** the loose one. Importing it inherits F5/F7 until a fleet image
+rebuild; the hook's own copy is strict today, with no rebuild.
 
-The same F5 looseness still sits in the **source** helper, which feeds the read
-path (`app-profile-context` and `memory-recall-context`). PR2 fixes it there too,
-shipping on the next image — **sequenced, not blocking**: with a strict write
-hook, no wrong-group write ever happens, so a loose read of `app_plusim` returns
-an empty graph. T8 asserts the two copies agree, so the duplication cannot drift.
+PR2 fixes the **source** helper as well (it feeds the read path via
+`app-profile-context` and `memory-recall-context`), shipping on the next image —
+**sequenced, not blocking**: with a strict write hook no wrong-group write happens,
+so a loose read of `app_plusim` returns an empty graph. **T12** asserts the two
+copies agree on every row, so the duplication cannot drift.
 
-**Why second-to-last and not "the segment after `:app:`":** Plusim's key is the
-namespaced 4-part form `app:plusim:<userId>:<conversationId>`. A naive
-"first segment after `:app:`" parser returns `plusim` — which would put **every
-Plusim user into one shared `app_plusim` graph**: a total cross-user memory leak
-in a financial-guidance app. The conversationId is always the final colon-free
-segment, so second-to-last is correct for both the 4-part namespaced form and the
-legacy 3-part `app:<userId>:<conversationId>`. This is the single most important
-line in the plan and T1/T2 exist to pin it.
+#### Plugin naming
 
-**Byte-identity invariant, verified before writing this plan.** The hook's
-`sanitize()` lowercases then maps non-`[A-Za-z0-9_]` to `_`; the read client's
-`appGroupIdFromUserId()` (`memory-recall-context.ts:46-48`) does **not** lowercase,
-relying on its resolvers having done so (`app-user-workspace.ts:55`,
-`app-profile-context.ts:132`). The two converge because the hook lowercases the raw
-entry value itself, and the gateway lowercases the canonical session key. Checked
-against a real mixed-case Clerk id:
-
-```
-write(hook) : app_user_3gaz4rid6bzjjykh0sdfusxgpza
-read(recall): app_user_3gaz4rid6bzjjykh0sdfusxgpza   → identical
-```
-
-If these ever diverge the agent writes to one graph and reads from another — a
-silent, total memory failure with no error. T3 pins it.
-
-**`onlyclaw` loads this plugin under its existing id, `life-memory-scope`.** The
-name is a wart on a financial app, but the id is internal, the code is
-agent-generic, and a rename would touch `life`'s working prod config for cosmetic
-gain. Renaming — and the staler `ops/graphiti-life/` directory name now that it
-serves two agents — is deliberately deferred; a comment in onlyclaw's config
-explains the name. Deploying the fixed file to `life` is a **separate, ask-first
-step** (§7): git leading the host is normal, and one prod agent per change is the
-point.
+`onlyclaw` loads this plugin under its existing id, `life-memory-scope`. The name is
+a wart on a financial app, but the id is internal, the code is agent-generic, and a
+rename would touch `life`'s working prod config for cosmetic gain. Renaming — and
+the staler `ops/graphiti-life/` directory name now that it serves two agents — is
+deliberately deferred; a comment in onlyclaw's config explains it. Deploying the
+fixed file to `life` is a **separate, ask-first step** (§7): git leading the host is
+normal, and one prod agent per change is the point.
 
 ### 3.4 `onlyclaw/openclaw.json`
 
