@@ -4,10 +4,15 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # Wraps agents_server_diagnostic.sh for cron: syncs the repo, runs the scan
 # (which rewrites the AUTOSCAN block in bug_list.md), commits + pushes the
-# refreshed bug list, and emails the full report to the ops address.
+# refreshed bug list, triggers the daily release report + deploy-log refresh,
+# and emails the full report to the ops address.
 #
 # Everything here is deterministic — no LLM. Install via crontab, e.g.:
-#   0 8 * * *  /bin/bash <repo>/scripts/ops/diagnostic-cron.sh >> /var/log/agentglob-diag.log 2>&1
+#   0 8 * * *  CRON_SECRET=<secret> /bin/bash <repo>/scripts/ops/diagnostic-cron.sh >> /var/log/agentglob-diag.log 2>&1
+#
+# CRON_SECRET (optional) enables the release-report trigger + deploy-log refresh
+# (step 4); it must match the dashboard's CRON_SECRET env var. Unset ⇒ step 4 is
+# skipped cleanly and the rest of the diagnostic runs unchanged.
 #
 set -uo pipefail
 
@@ -24,6 +29,13 @@ DASH_REPO="${DASH_REPO:-/root/AgentGlob_Apps/openclaw-dashboard}"
 BUG_LIST_REL=docs/ops/bug_list.md
 BUG_LIST="$DASH_REPO/$BUG_LIST_REL"
 BUG_LIST_URL=https://github.com/cryptolir/openclaw-dashboard/blob/main/docs/ops/bug_list.md
+# Release-notify (dashboard plan docs/plans/release-notify-cron.md): this cron is
+# the daily trigger — its run time IS the report cutoff. Both endpoints are
+# CRON_SECRET-gated; export CRON_SECRET in the crontab entry to enable them.
+DASH_URL="${DASH_URL:-https://app.agentglob.com}"
+FEATURE_RELEASES_REL=docs/ops/feature-releases.md
+FEATURE_RELEASES="$DASH_REPO/$FEATURE_RELEASES_REL"
+FEATURE_RELEASES_URL=https://github.com/cryptolir/openclaw-dashboard/blob/main/docs/ops/feature-releases.md
 
 cd "$REPO" || { echo "FATAL: $REPO not found"; exit 1; }
 
@@ -38,6 +50,7 @@ git pull -q --rebase --autostash origin main || echo "WARN: git pull failed; con
 if git -C "$DASH_REPO" rev-parse --git-dir >/dev/null 2>&1; then
   if [[ "$(git -C "$DASH_REPO" branch --show-current)" == "main" ]]; then
     git -C "$DASH_REPO" checkout -- "$BUG_LIST_REL" 2>/dev/null || true
+    git -C "$DASH_REPO" checkout -- "$FEATURE_RELEASES_REL" 2>/dev/null || true
     git -C "$DASH_REPO" pull -q --rebase --autostash origin main \
       || echo "WARN: dashboard git pull failed; continuing with local tree"
   else
@@ -97,7 +110,49 @@ else
   echo "→ bug_list.md unchanged (or dashboard not on main); nothing to push"
 fi
 
-# 4. Email the report. Subject carries the P0..P3 totals at a glance.
+# 4. Trigger the daily release report, then refresh the deploy log. This run IS
+#    the report cutoff: qualifying deploys detected now go into today's email,
+#    later ones roll into tomorrow's. Both endpoints are CRON_SECRET-gated and
+#    everything here is best-effort — a failure WARNs and never aborts the
+#    diagnostic. Plan: openclaw-dashboard docs/plans/release-notify-cron.md.
+if [[ -z "${CRON_SECRET:-}" ]]; then
+  echo "→ CRON_SECRET unset; skipping release report + deploy-log refresh"
+elif [[ "$(git -C "$DASH_REPO" branch --show-current 2>/dev/null)" != "main" ]]; then
+  echo "→ dashboard not on main; skipping release report + deploy-log refresh"
+else
+  RN_OUT=/var/tmp/agentglob-release-notify.out
+  RN_CODE="$(curl -sS --max-time 300 -o "$RN_OUT" -w '%{http_code}' \
+    -H "Authorization: Bearer $CRON_SECRET" "$DASH_URL/api/cron/release-notify" 2>/dev/null || echo 000)"
+  if [[ "$RN_CODE" == "200" ]]; then
+    echo "→ release report triggered: $(head -c 300 "$RN_OUT")"
+  else
+    echo "WARN: release-notify returned $RN_CODE — $(head -c 300 "$RN_OUT" 2>/dev/null)"
+  fi
+
+  # Render the ledger to the tracking file. Overwrite ONLY on a clean 200 whose
+  # body actually looks like the log — a 5xx JSON error or an HTML error page
+  # must never truncate a committed file.
+  RL_TMP="$(mktemp)"
+  RL_CODE="$(curl -sS --max-time 120 -o "$RL_TMP" -w '%{http_code}' \
+    -H "Authorization: Bearer $CRON_SECRET" "$DASH_URL/api/cron/release-log" 2>/dev/null || echo 000)"
+  if [[ "$RL_CODE" == "200" && -s "$RL_TMP" ]] && head -1 "$RL_TMP" | grep -q '^# Deploy log'; then
+    mv "$RL_TMP" "$FEATURE_RELEASES"
+    if ! git -C "$DASH_REPO" diff --quiet "$FEATURE_RELEASES_REL" 2>/dev/null; then
+      git -C "$DASH_REPO" add "$FEATURE_RELEASES_REL"
+      git -C "$DASH_REPO" commit -q -m "ops: refresh deploy log $(date +%F)" \
+        && git -C "$DASH_REPO" push -q origin main \
+        && echo "→ feature-releases.md committed + pushed (dashboard repo)" \
+        || echo "WARN: feature-releases.md commit/push failed (dashboard repo)"
+    else
+      echo "→ feature-releases.md unchanged; nothing to push"
+    fi
+  else
+    rm -f "$RL_TMP"
+    echo "WARN: release-log returned $RL_CODE — deploy log left untouched"
+  fi
+fi
+
+# 5. Email the report. Subject carries the P0..P3 totals at a glance.
 COUNTS="$(printf '%s\n' "$REPORT" | grep -oE 'Totals:.*' | tail -1)"
 SUBJECT="[AgentGlob] Fleet diagnostic $(date +%F) — ${COUNTS:-scan complete}"
 if command -v msmtp >/dev/null 2>&1; then
@@ -118,6 +173,7 @@ if command -v msmtp >/dev/null 2>&1; then
       printf '═══════ DEPENDENCY AUDIT ═══════\n⚠ report missing or stale (>6h) — the 05:45 deps-audit cron produced no fresh output; see /var/log/agentglob-deps.log\n\n'
     fi
     printf 'Bug list: %s\n' "$BUG_LIST_URL"
+    printf 'Deploy log: %s\n' "$FEATURE_RELEASES_URL"
   } | msmtp "$EMAIL_TO" \
       && echo "→ summary emailed to $EMAIL_TO" \
       || echo "WARN: email send failed — check ~/.msmtp.log and the Gmail app password in ~/.msmtprc"
