@@ -1,6 +1,24 @@
 # Graphiti per-user memory for the Plusim app (`onlyclaw`, EU host)
 
-**Rev 2** · 2026-07-15 · status: **draft — BLOCKED, see F6**
+**Rev 3** · 2026-07-15 · status: **draft — BLOCKED, see F6**
+
+> **Rev 3 (folds Codex round 2).** Round 2's P1 found **two holes in Rev 2's own
+> "strict" parser** — both confirmed by execution (**F7**): a namespaced key
+> missing its conversationId (`…:app:plusim:user_abc`) was accepted as the legacy
+> 2-segment form and returned **`app_plusim`**, the very shared bucket Rev 2
+> claimed to close; and `lastIndexOf(":app:")` let an appended marker
+> (`…:conv:app:user_victim:x`) return **`app_user_victim`** — a victim's group,
+> by string-crafting alone.
+>
+> The lesson, and why round 2 landed at all: Rev 2 still **inferred** structure
+> from an untrusted string, just more carefully. Rev 3 stops inferring and
+> **validates against a known expected shape** — one anchored regex with the
+> namespace pinned from plugin config (§3.3). The 2-vs-3-segment ambiguity is not
+> resolvable structurally; only the expected namespace resolves it. Legacy 3-part
+> keys now fail **closed** — deliberate, and called out below. Same
+> validate-don't-coerce fix applied to the persisted-entry path. T5–T8 → T5–T11.
+
+**Rev 2** · 2026-07-15 · status: superseded by Rev 3
 
 > **Rev 2 (folds Codex round 1).** Codex P1 → **F5** (verified: the parser buckets
 > malformed keys into `app_plusim`/`app_thread` instead of failing closed) → §3.3
@@ -191,6 +209,28 @@ memories needs nothing. Plusim **already holds** `AGENTGLOB_APP_API_KEY`.
 not per-user memory; shipping §3 on top of F6 would ship I1 as a fiction. The fix
 lives in `openclaw-dashboard`, not here — see §7 and §9.
 
+**F7 — Rev 2's "strict" parser was still inference, and leaked two ways.**
+_(Codex round 2, P1 — both confirmed by execution.)_
+
+```
+F7-A  agent:main:app:plusim:user_abc                        → app_user_abc? no: app_plusim
+F7-B  agent:main:app:plusim:user_abc:conv:app:user_victim:x → app_user_victim
+```
+
+**F7-A:** a namespaced key missing its conversationId has a 2-segment tail
+(`plusim:user_abc`), which Rev 2 accepted as the _legacy_ `<userId>:<conv>` form
+and resolved to `plusim` — reopening the exact shared bucket Rev 2 was written to
+close. **F7-B:** `lastIndexOf(":app:")` scans from the **right**, so appending
+`:app:user_victim:x` to any key hands the parser a tail of the attacker's
+choosing — a victim's group by string-crafting alone, no auth bug required.
+
+The pattern across F5 and F7 is one mistake, twice: **inferring structure from an
+untrusted string**. Rev 1 inferred by position; Rev 2 inferred more carefully by
+segment count; both leaked. Rev 3 stops inferring — it asserts one anchored shape
+with the namespace pinned out-of-band (§3.3). This is also why F7-A is not fixable
+by parsing alone: the ambiguity is real, and only the expected namespace resolves
+it.
+
 ---
 
 ## 3. Design
@@ -307,9 +347,55 @@ function appUserIdFromSessionKey(sessionKey) {
 }
 ```
 
-Exactly two shapes are legal — 3 segments (`<namespace>:<userId>:<conversationId>`)
-and 2 (legacy `<userId>:<conversationId>`). Everything else returns null and the
-hook blocks. T1–T8 pin every row of the F5 table.
+**Rev 3: the block above was still inference, and F7 killed it. Replaced by:**
+
+```js
+// The agent knows exactly ONE legal key shape. Anchored ^...$ so an appended
+// ":app:" cannot shift the match (F7-B); namespace pinned so a missing
+// conversationId cannot masquerade as the legacy form (F7-A); [^:]+ so extra
+// segments cannot exist. Everything else → null → the hook blocks.
+//   agent:<agentId>:app:<namespace>:<userId>:<conversationId>
+const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const appKeyRe = (ns) => new RegExp(`^agent:[^:]+:app:${escapeRe(ns)}:([a-z0-9_-]+):[^:]+$`);
+
+function appUserIdFromSessionKey(sessionKey, ns) {
+  if (typeof sessionKey !== "string" || !ns) return null;
+  const m = sessionKey.match(appKeyRe(ns));
+  return m ? m[1].toLowerCase() : null;
+}
+```
+
+Verified against every known bad shape — executed, not reasoned:
+
+```
+agent:main:app:plusim:user_abc:conv-uuid              → app_user_abc  (legit)
+agent:main:app:plusim:user_abc                        → null ✓  (F7-A: was app_plusim)
+agent:main:app:plusim:user_abc:conv:app:user_victim:x → null ✓  (F7-B: was app_user_victim)
+agent:main:app:plusim:user_abc:                       → null ✓
+agent:main:app:plusim:user_abc:thread:1               → null ✓
+agent:main:app:user_abc:conv1                         → null ✓  (legacy — now fails CLOSED)
+```
+
+**Why the namespace must come from config, not from the key.** A 2-segment tail
+`plusim:user_abc` is structurally identical to a legacy `<userId>:<conversationId>`
+— nothing _in the key_ separates "namespaced, conversationId missing" from
+"legacy, conversationId present". No parser resolves that; only knowing the
+expected namespace does. So `plugins.entries.life-memory-scope.config.appNamespace`
+= `"plusim"` for onlyclaw (§3.4), carried in the `configSchema` the plugin must
+have anyway. Not speculative flexibility — the minimum fact needed to parse
+unambiguously.
+
+**Legacy 3-part keys now fail closed — deliberate.** `life` has 111 legacy-form
+sessions. They lose only the _turn-1_ fallback (their entries carry `appUserId`
+from turn 2 on, the primary path), and they fail **closed**: a blocked write, never
+a wrong group. For Plusim it is moot — every key `makeSessionKey()` mints is
+namespaced.
+
+**Same fix on the persisted-entry path (Rev 3).** `sanitize()` _coerces_: it maps
+every non-`[A-Za-z0-9_]` char to `_`, so `a:b` and `a_b` collapse into one group.
+Coercion invents an identity; validation refuses one. The entry path now validates
+(`/^[a-z0-9_-]+$/` after lowercasing, else null) instead of sanitising, matching the
+key path. T11 pins the collision.
 
 **Why the hook carries its own copy rather than importing the gateway's.** The
 hook already lazily imports `/app/src/gateway/session-utils.js`, so importing
@@ -367,6 +453,11 @@ Backup `openclaw.json.bak.pre-graphiti` first. Add:
   `GRAPHITI_URL=http://graphiti-mcp:8000/mcp`,
   `GRAPHITI_HOST_HEADER=localhost:8000` (Graphiti 421s any non-localhost `Host`).
 - `plugins.entries.life-memory-scope.enabled = true` (name explained in §3.3).
+- `plugins.entries.life-memory-scope.config.appNamespace = "plusim"` — **(Rev 3,
+  F7-A)** the pinned namespace §3.3's parser validates against. Without it the
+  hook cannot tell a namespaced key missing its conversationId from a legacy key,
+  so it must fail closed: **no `appNamespace` ⇒ no session-key fallback at all**
+  (the persisted-entry path still works). Declared in the plugin's `configSchema`.
 - `plugins.allow = ["telegram", "mcp-bridge", "life-memory-scope"]` — currently
   `null`; pins trust for local extension code the loader otherwise warns about.
 - `hooks.internal.enabled = true` — **hooks do not run without it.**
@@ -424,20 +515,24 @@ parser regress with CI green — the failure mode the tests exist to prevent.
 - **T5 (I3, F5)** trailing colon `"agent:main:app:plusim:user_abc:"` → **null**, not `"plusim"`.
 - **T6 (I3, F5)** extra segment `"agent:main:app:plusim:user_abc:thread:1"` → **null**, not `"thread"`.
 - **T7 (I3, F5)** empty interior segment (`"…:app:plusim::conv"`) → **null**.
-- **T8 (F5 drift guard)** the hook's copy and the source helper agree on every row of T1–T7 — the duplication in §3.3 cannot silently diverge.
+- **T8 (I3, F7-A)** missing conversationId `"agent:main:app:plusim:user_abc"` → **null**, not `"plusim"`. _Rev 2 returned the shared bucket here._
+- **T9 (I3, F7-B)** appended marker `"agent:main:app:plusim:user_abc:conv:app:user_victim:x"` → **null**, not `"user_victim"`. _The crafted-impersonation case; must hold even with F6 fixed._
+- **T10 (I3, F7-A)** a key with the **wrong** namespace (`"agent:main:app:havaya:user_abc:conv"` on an agent pinned to `plusim`) → **null**. Pins that the namespace is checked, not merely skipped over.
+- **T11 (I1, Rev 3)** the persisted-entry path **validates and does not coerce**: `appUserId` values `"a:b"` and `"a_b"` must not collapse to the same group — the unsafe one resolves to **null**, not to `app_a_b`.
+- **T12 (F5 drift guard)** the hook's copy and the source helper agree on every row of T1–T11 — the duplication in §3.3 cannot silently diverge.
 
 Live smoke (deploy gate, mirrors `ops/graphiti-life/recall2.sh`):
 
-- **T9 (F2/I2)** turn 1 of a brand-new session writes memory successfully — the measured regression.
-- **T10 (I1)** two users' writes land in different groups; user A's search never returns user B's fact.
-- **T11 (I5)** `tools/list` through the proxy exposes only `add_memory`, `search_memory_facts`, `search_nodes`, `get_episodes`.
-- **T12 (I1)** a model-supplied `group_id`/`group_ids` argument is overridden by the pinned value.
-- **T13 (I1)** a proxy call with no `__group_id` is refused.
-- **T14 (I4)** a Telegram session's `mcp__graphiti__*` call is blocked.
-- **T15 (I6)** with graphiti-mcp stopped, a chat turn still completes.
-- **T16 (I7)** `ss -lntp` shows `:8000` bound to `172.17.0.1` only; falkordb unpublished.
-- **T17** after `docker compose up -d --force-recreate` of `onlyclaw`, it still resolves `graphiti-mcp` — the PR #59 network-join regression.
-- **T18 (I9, F6 — the deploy gate)** an **unauthenticated** POST to
+- **T13 (F2/I2)** turn 1 of a brand-new session writes memory successfully — the measured regression.
+- **T14 (I1)** two users' writes land in different groups; user A's search never returns user B's fact.
+- **T15 (I5)** `tools/list` through the proxy exposes only `add_memory`, `search_memory_facts`, `search_nodes`, `get_episodes`.
+- **T16 (I1)** a model-supplied `group_id`/`group_ids` argument is overridden by the pinned value.
+- **T17 (I1)** a proxy call with no `__group_id` is refused.
+- **T18 (I4)** a Telegram session's `mcp__graphiti__*` call is blocked.
+- **T19 (I6)** with graphiti-mcp stopped, a chat turn still completes.
+- **T20 (I7)** `ss -lntp` shows `:8000` bound to `172.17.0.1` only; falkordb unpublished.
+- **T21** after `docker compose up -d --force-recreate` of `onlyclaw`, it still resolves `graphiti-mcp` — the PR #59 network-join regression.
+- **T22 (I9, F6 — the deploy gate)** an **unauthenticated** POST to
   `/api/public/chat/onlyclaw` carrying `appUserId` or an `app:` session key is
   **rejected**. This is the exact `curl` that succeeded while measuring F2; it
   must fail before memory is enabled. Its counterpart: the same request **with**
@@ -469,10 +564,10 @@ F6 is closed — sequencing, not preference (§9).
 2. **PR2** — no host changes: the §3.3 **strict** parser + fallback in
    `life-memory-scope/index.js`; the same strictness in the source helper
    (`app-profile-context.ts`, rides the next image); the two interpolated vars in
-   `ops/graphiti-life/docker-compose.yml` + `.env.example`; T1–T8 as **Vitest**.
+   `ops/graphiti-life/docker-compose.yml` + `.env.example`; T1–T12 as **Vitest**.
 3. **Deploy to `onlyclaw` (ask-first — infra, §Act-vs-ask)** — gated on step 0,
-   verified by **T18**. Stack up on EU → copy proxy + hook, perms →
-   `openclaw.json` → `AGENTS.md` → smoke T9–T17. Per the deploy protocol, host
+   verified by **T22**. Stack up on EU → copy proxy + hook, perms →
+   `openclaw.json` → `AGENTS.md` → smoke T13–T21. Per the deploy protocol, host
    changes land in git in the same task, with `.bak.pre-graphiti` backups.
 4. **Deploy the same fix to `life` (ask-first, separate)** — closes life's turn-1
    gap. Deliberately not bundled: one prod agent per change.
