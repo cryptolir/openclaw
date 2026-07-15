@@ -136,15 +136,31 @@ else
   RL_CODE="$(curl -sS --max-time 120 -o "$RL_TMP" -w '%{http_code}' \
     -H "Authorization: Bearer $CRON_SECRET" "$DASH_URL/api/cron/release-log" 2>/dev/null || echo 000)"
   if [[ "$RL_CODE" == "200" && -s "$RL_TMP" ]] && head -1 "$RL_TMP" | grep -q '^# Deploy log'; then
-    mv "$RL_TMP" "$FEATURE_RELEASES"
-    if ! git -C "$DASH_REPO" diff --quiet "$FEATURE_RELEASES_REL" 2>/dev/null; then
-      git -C "$DASH_REPO" add "$FEATURE_RELEASES_REL"
-      git -C "$DASH_REPO" commit -q -m "ops: refresh deploy log $(date +%F)" \
-        && git -C "$DASH_REPO" push -q origin main \
-        && echo "→ feature-releases.md committed + pushed (dashboard repo)" \
-        || echo "WARN: feature-releases.md commit/push failed (dashboard repo)"
+    # Shrink guard: the log is append-only, so a render with FEWER entries than
+    # the committed file means the ledger is under-populated (e.g. the cron was
+    # wired before GH_RELEASE_READ_TOKEN, so the dashboard stream fails closed
+    # and only gateway rows render). Refuse to clobber a good file with a thin
+    # one — a real shrink never happens.
+    NEW_N="$(grep -c '^- ' "$RL_TMP" || true)"
+    OLD_N=0
+    [[ -f "$FEATURE_RELEASES" ]] && OLD_N="$(grep -c '^- ' "$FEATURE_RELEASES" || true)"
+    if (( NEW_N < OLD_N )); then
+      rm -f "$RL_TMP"
+      echo "WARN: release-log rendered $NEW_N entries vs $OLD_N committed — refusing to shrink the deploy log (check GH_RELEASE_READ_TOKEN + the release_log backfill)"
     else
-      echo "→ feature-releases.md unchanged; nothing to push"
+      mv "$RL_TMP" "$FEATURE_RELEASES"
+      # `git diff --quiet` reports NO change for an UNTRACKED path, so the very
+      # first creation would never be committed (Codex #103). `git status
+      # --porcelain` covers modified AND untracked.
+      if [[ -n "$(git -C "$DASH_REPO" status --porcelain -- "$FEATURE_RELEASES_REL" 2>/dev/null)" ]]; then
+        git -C "$DASH_REPO" add "$FEATURE_RELEASES_REL"
+        git -C "$DASH_REPO" commit -q -m "ops: refresh deploy log $(date +%F)" \
+          && git -C "$DASH_REPO" push -q origin main \
+          && echo "→ feature-releases.md committed + pushed ($NEW_N entries)" \
+          || echo "WARN: feature-releases.md commit/push failed (dashboard repo)"
+      else
+        echo "→ feature-releases.md unchanged; nothing to push"
+      fi
     fi
   else
     rm -f "$RL_TMP"
