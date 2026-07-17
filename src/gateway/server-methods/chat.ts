@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { CURRENT_SESSION_VERSION, SessionManager } from "@mariozechner/pi-coding-agent";
 import { resolveSessionAgentId } from "../../agents/agent-scope.js";
+import { isAppUserSession } from "../../agents/app-user-workspace.js";
 import { resolveThinkingDefault } from "../../agents/model-selection.js";
 import { resolveAgentTimeoutMs } from "../../agents/timeout.js";
 import { dispatchInboundMessage } from "../../auto-reply/dispatch.js";
@@ -808,7 +809,15 @@ export const chatHandlers: GatewayRequestHandlers = {
     // failure here must never block the chat turn.
     if (typeof p.appUserId === "string" && p.appUserId.trim() && sessionStorePath) {
       const appUserId = p.appUserId.trim();
-      if (entry?.appUserId !== appUserId) {
+      // F6 write-side (dashboard plan public-chat-app-identity §3.4.2): never
+      // persist an app identity onto a non-app-scoped key — resolveAppUserId
+      // refuses to read one (same isAppUserSession predicate), and an entry in
+      // that shape is evidence of a forged request, not a legitimate caller.
+      if (!isAppUserSession(sessionKey)) {
+        context.logGateway.warn(
+          `chat.send: refusing to persist appUserId on a non-app session key (shape=${sessionKey.split(":")[0] || "?"}:…)`,
+        );
+      } else if (entry?.appUserId !== appUserId) {
         try {
           await updateSessionStoreEntry({
             storePath: sessionStorePath,

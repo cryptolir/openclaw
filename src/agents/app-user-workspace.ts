@@ -36,14 +36,48 @@ export const ADMIN_APP_USER_IDS: ReadonlySet<string> = new Set<string>([
   // (none yet — populate with real admin appUserIds)
 ]);
 
-/** A session is an app-user session iff its key carries an `:app:` segment. */
+/**
+ * A session is an app-user session iff its key matches the canonical app-key
+ * grammar — the `app` marker at a FIXED position, not merely present as a
+ * substring (Codex #105 P1):
+ *
+ *   bare:            app:[<namespace>:]<userId>:<conversationId>       (seg[0] === "app")
+ *   gateway-prefixed: agent:<agentId>:app:[<namespace>:]<userId>:<conversationId>  (seg[2] === "app")
+ *
+ * A substring test (`/(?:^|:)app:/`) matched crafted non-app keys whose channel
+ * account id happens to be "app", e.g. `agent:main:telegram:app:direct:123` —
+ * which would then have identity persisted/honoured on it, reopening the
+ * poisoned-state path this predicate guards. Persist (chat.send) and honour
+ * (resolveAppUserId) share THIS function, so both are canonical together.
+ */
 export function isAppUserSession(sessionKey?: string): boolean {
-  return typeof sessionKey === "string" && /(?:^|:)app:/.test(sessionKey);
+  if (typeof sessionKey !== "string" || !sessionKey) {
+    return false;
+  }
+  const seg = sessionKey.split(":");
+  // Bare form needs at least app:<userId>:<conversationId>.
+  if (seg[0] === "app") {
+    return seg.length >= 3;
+  }
+  // Gateway-prefixed form: the marker must sit right after `agent:<agentId>`,
+  // with a userId+conversationId tail (agent:<id>:app:<userId>:<conv> ⇒ ≥5).
+  if (seg[0] === "agent" && seg[2] === "app") {
+    return seg.length >= 5;
+  }
+  return false;
 }
 
 /** Resolve the lowercased, path-safe appUserId from the persisted session entry. */
 export function resolveAppUserId(sessionKey?: string): string | null {
   if (!sessionKey) {
+    return null;
+  }
+  // F6 read-side (dashboard plan public-chat-app-identity §3.4.2): a persisted
+  // appUserId is honoured ONLY on an app-scoped key. An entry poisoned onto an
+  // anon:/other key during the exposure window must not resolve — identity in
+  // server state is only as authorized as the key it sits on (I8). chat.send
+  // enforces the same predicate write-side; keep both on isAppUserSession.
+  if (!isAppUserSession(sessionKey)) {
     return null;
   }
   try {
