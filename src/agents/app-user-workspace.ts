@@ -46,6 +46,14 @@ export function resolveAppUserId(sessionKey?: string): string | null {
   if (!sessionKey) {
     return null;
   }
+  // F6 read-side (dashboard plan public-chat-app-identity §3.4.2): a persisted
+  // appUserId is honoured ONLY on an app-scoped key. An entry poisoned onto an
+  // anon:/other key during the exposure window must not resolve — identity in
+  // server state is only as authorized as the key it sits on (I8). chat.send
+  // enforces the same predicate write-side; keep both on isAppUserSession.
+  if (!isAppUserSession(sessionKey)) {
+    return null;
+  }
   try {
     const { entry } = loadSessionEntry(sessionKey);
     const raw = (entry as { appUserId?: unknown } | undefined)?.appUserId;
