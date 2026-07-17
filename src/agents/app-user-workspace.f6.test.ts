@@ -51,4 +51,26 @@ describe("resolveAppUserId — F6 read-side refusal (T17a)", () => {
     expect(isAppUserSession("agent:main:app:havaya:u:c")).toBe(true);
     expect(isAppUserSession(undefined)).toBe(false);
   });
+
+  it("Codex #105 P1: canonical grammar — the app marker must be at a fixed position", () => {
+    // Real forms accepted:
+    expect(isAppUserSession("app:userid:conv")).toBe(true); // bare legacy 3-part
+    expect(isAppUserSession("app:havaya:userid:conv")).toBe(true); // bare namespaced
+    expect(isAppUserSession("agent:main:app:userid:conv")).toBe(true); // prefixed legacy
+    expect(isAppUserSession("agent:life:app:havaya:userid:conv")).toBe(true); // prefixed namespaced
+    // Substring impostors REJECTED — marker buried behind a channel segment or elsewhere:
+    expect(isAppUserSession("agent:main:telegram:app:direct:123")).toBe(false); // the reported attack
+    expect(isAppUserSession("agent:main:whatsapp:app:x:y")).toBe(false);
+    expect(isAppUserSession("anon:app:x:y")).toBe(false); // app not at seg 0 or 2
+    expect(isAppUserSession("member:app:x:y")).toBe(false);
+    expect(isAppUserSession("app")).toBe(false); // no tail
+    expect(isAppUserSession("agent:main:app")).toBe(false); // marker but no userId/conv tail
+  });
+
+  it("Codex #105 P1: the honour path rejects a poisoned entry on a substring-impostor key", () => {
+    // Entry mock is POISONED with user_victim; a telegram key that merely
+    // CONTAINS :app: must not resolve it now.
+    expect(resolveAppUserId("agent:main:telegram:app:direct:123")).toBeNull();
+    expect(loadSessionEntry).not.toHaveBeenCalled();
+  });
 });
