@@ -64,7 +64,7 @@ function mergePropertySchemas(existing: unknown, incoming: unknown): unknown {
 
 export function normalizeToolParameters(
   tool: AnyAgentTool,
-  options?: { modelProvider?: string },
+  options?: { modelProvider?: string; modelId?: string },
 ): AnyAgentTool {
   const schema =
     tool.parameters && typeof tool.parameters === "object"
@@ -82,9 +82,14 @@ export function normalizeToolParameters(
   //
   // Normalize once here so callers can always pass `tools` through unchanged.
 
+  // Gemini enforces its stricter schema rules wherever the model actually runs.
+  // When it's served via a proxy (venice/gemini-*, openrouter/google/gemini-*)
+  // the provider is "venice"/"openrouter", so key off the model id too —
+  // otherwise the Gemini cleaning is skipped and Google 400s the tool schema.
   const isGeminiProvider =
     options?.modelProvider?.toLowerCase().includes("google") ||
-    options?.modelProvider?.toLowerCase().includes("gemini");
+    options?.modelProvider?.toLowerCase().includes("gemini") ||
+    options?.modelId?.toLowerCase().includes("gemini");
   const isAnthropicProvider =
     options?.modelProvider?.toLowerCase().includes("anthropic") ||
     options?.modelProvider?.toLowerCase().includes("google-antigravity");
