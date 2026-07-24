@@ -164,17 +164,6 @@
     }
   },
   {
-    "contentHash": "sha256:2ed3b5575558302b497d84a2cbbb9107f58765c1c4e82ab1b006515a4e96ead3",
-    "description": "Read, search, send, and reply to Gmail over IMAP/SMTP using a Google App Password. Use when the user asks to check mail, find an email, draft a reply, or send a message from their agent's Gmail account. NOT for: non-Gmail mailboxes, calendar, or attachments (read-only names, no downloads).",
-    "emoji": "📬",
-    "name": "gmail",
-    "path": "skills/gmail/SKILL.md",
-    "requires": {
-      "bins": ["python3"],
-      "env": ["GMAIL_ADDRESS", "GMAIL_APP_PASSWORD"]
-    }
-  },
-  {
     "contentHash": "sha256:ceb5ee5bb4f0b9016694ed709180399fc75214b7b91a958e1aae1e1a351cb0b6",
     "description": "Google Workspace CLI for Gmail, Calendar, Drive, Contacts, Sheets, and Docs.",
     "emoji": "🎮",
