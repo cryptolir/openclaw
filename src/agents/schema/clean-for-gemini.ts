@@ -339,6 +339,27 @@ function cleanSchemaForGeminiWithDefs(
     }
   }
 
+  // Gemini 400s on a `required` name that isn't in `properties`
+  // ("property is not defined"); lenient providers ignore it. Drop stray names.
+  // Only where a `properties` object is the sibling — composition (allOf/$ref)
+  // may define the rest, so never prune those.
+  if (
+    cleaned.properties &&
+    typeof cleaned.properties === "object" &&
+    !Array.isArray(cleaned.properties) &&
+    Array.isArray(cleaned.required)
+  ) {
+    const props = cleaned.properties as Record<string, unknown>;
+    const pruned = (cleaned.required as unknown[]).filter(
+      (name) => typeof name === "string" && name in props,
+    );
+    if (pruned.length > 0) {
+      cleaned.required = pruned;
+    } else {
+      delete cleaned.required;
+    }
+  }
+
   return cleaned;
 }
 
