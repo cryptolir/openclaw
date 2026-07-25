@@ -17,6 +17,14 @@ services:
       CLAUDE_WEB_COOKIE: ${CLAUDE_WEB_COOKIE}
       AGENTGLOB_RUNTIME_URL: ${AGENTGLOB_RUNTIME_URL:-}
       AGENTGLOB_RUNTIME_TOKEN: ${AGENTGLOB_RUNTIME_TOKEN:-}
+      # Per-agent Gmail (dashboard Tools → Email). This compose has NO env_file,
+      # so a key written to docker.env reaches the container ONLY if it is
+      # allowlisted here. The `:-` gives an empty string (not a compose warning)
+      # for agents with no connected mailbox — harmless, since the gmail skill is
+      # installed per-agent only on connect, so a non-connected agent never runs
+      # it. A connected agent's docker.env carries the real value.
+      GMAIL_ADDRESS: ${GMAIL_ADDRESS:-}
+      GMAIL_APP_PASSWORD: ${GMAIL_APP_PASSWORD:-}
     volumes:
       - ${OPENCLAW_CONFIG_DIR}:/home/node/.openclaw
       - ${OPENCLAW_WORKSPACE_DIR}:/home/node/.openclaw/workspace
@@ -61,6 +69,14 @@ services:
       CLAUDE_WEB_COOKIE: ${CLAUDE_WEB_COOKIE}
       AGENTGLOB_RUNTIME_URL: ${AGENTGLOB_RUNTIME_URL:-}
       AGENTGLOB_RUNTIME_TOKEN: ${AGENTGLOB_RUNTIME_TOKEN:-}
+      # Per-agent Gmail (dashboard Tools → Email). This compose has NO env_file,
+      # so a key written to docker.env reaches the container ONLY if it is
+      # allowlisted here. The `:-` gives an empty string (not a compose warning)
+      # for agents with no connected mailbox — harmless, since the gmail skill is
+      # installed per-agent only on connect, so a non-connected agent never runs
+      # it. A connected agent's docker.env carries the real value.
+      GMAIL_ADDRESS: ${GMAIL_ADDRESS:-}
+      GMAIL_APP_PASSWORD: ${GMAIL_APP_PASSWORD:-}
     volumes:
       - ${OPENCLAW_CONFIG_DIR}:/home/node/.openclaw
       - ${OPENCLAW_WORKSPACE_DIR}:/home/node/.openclaw/workspace
