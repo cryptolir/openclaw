@@ -25,6 +25,16 @@ services:
       # it. A connected agent's docker.env carries the real value.
       GMAIL_ADDRESS: ${GMAIL_ADDRESS:-}
       GMAIL_APP_PASSWORD: ${GMAIL_APP_PASSWORD:-}
+      # Per-agent Google Calendar (dashboard Tools → Calendar). Same allowlist
+      # rule as the GMAIL_* pair above. These two are NOT secrets-in-Google
+      # terms: the URL is public and the token authenticates ONLY against the
+      # dashboard's Calendar broker (one endpoint, per-agent, killed the instant
+      # the agent is disabled). The Google refresh token never comes near this
+      # file — it stays encrypted in Firestore. The skill declares BOTH keys in
+      # requires.env with ALL semantics, so an agent missing either never sees
+      # the skill at all.
+      GCAL_RUNTIME_URL: ${GCAL_RUNTIME_URL:-}
+      GCAL_RUNTIME_TOKEN: ${GCAL_RUNTIME_TOKEN:-}
     volumes:
       - ${OPENCLAW_CONFIG_DIR}:/home/node/.openclaw
       - ${OPENCLAW_WORKSPACE_DIR}:/home/node/.openclaw/workspace
@@ -77,6 +87,16 @@ services:
       # it. A connected agent's docker.env carries the real value.
       GMAIL_ADDRESS: ${GMAIL_ADDRESS:-}
       GMAIL_APP_PASSWORD: ${GMAIL_APP_PASSWORD:-}
+      # Per-agent Google Calendar (dashboard Tools → Calendar). Same allowlist
+      # rule as the GMAIL_* pair above. These two are NOT secrets-in-Google
+      # terms: the URL is public and the token authenticates ONLY against the
+      # dashboard's Calendar broker (one endpoint, per-agent, killed the instant
+      # the agent is disabled). The Google refresh token never comes near this
+      # file — it stays encrypted in Firestore. The skill declares BOTH keys in
+      # requires.env with ALL semantics, so an agent missing either never sees
+      # the skill at all.
+      GCAL_RUNTIME_URL: ${GCAL_RUNTIME_URL:-}
+      GCAL_RUNTIME_TOKEN: ${GCAL_RUNTIME_TOKEN:-}
     volumes:
       - ${OPENCLAW_CONFIG_DIR}:/home/node/.openclaw
       - ${OPENCLAW_WORKSPACE_DIR}:/home/node/.openclaw/workspace
