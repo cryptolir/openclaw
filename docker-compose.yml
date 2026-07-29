@@ -35,6 +35,10 @@ services:
       # the skill at all.
       GCAL_RUNTIME_URL: ${GCAL_RUNTIME_URL:-}
       GCAL_RUNTIME_TOKEN: ${GCAL_RUNTIME_TOKEN:-}
+      # here.now publishing/Drive key (dashboard Tools -> Core API Keys).
+      # Same allowlist rule as the GMAIL_*/GCAL_* keys above: with no env_file,
+      # a per-agent docker.env key reaches the container ONLY if listed here.
+      HERE_NOW: ${HERE_NOW:-}
     volumes:
       - ${OPENCLAW_CONFIG_DIR}:/home/node/.openclaw
       - ${OPENCLAW_WORKSPACE_DIR}:/home/node/.openclaw/workspace
@@ -97,6 +101,10 @@ services:
       # the skill at all.
       GCAL_RUNTIME_URL: ${GCAL_RUNTIME_URL:-}
       GCAL_RUNTIME_TOKEN: ${GCAL_RUNTIME_TOKEN:-}
+      # here.now publishing/Drive key (dashboard Tools -> Core API Keys).
+      # Same allowlist rule as the GMAIL_*/GCAL_* keys above: with no env_file,
+      # a per-agent docker.env key reaches the container ONLY if listed here.
+      HERE_NOW: ${HERE_NOW:-}
     volumes:
       - ${OPENCLAW_CONFIG_DIR}:/home/node/.openclaw
       - ${OPENCLAW_WORKSPACE_DIR}:/home/node/.openclaw/workspace
