@@ -17,6 +17,11 @@ services:
       CLAUDE_WEB_COOKIE: ${CLAUDE_WEB_COOKIE}
       AGENTGLOB_RUNTIME_URL: ${AGENTGLOB_RUNTIME_URL:-}
       AGENTGLOB_RUNTIME_TOKEN: ${AGENTGLOB_RUNTIME_TOKEN:-}
+      # Per-agent Plusim reports skill (plusim.xyz). Same allowlist rule as the
+      # GMAIL_* pair below: written to docker.env by the operator, reaches the
+      # container only via this list. Empty for agents without the skill.
+      PLUSIM_RUNTIME_URL: ${PLUSIM_RUNTIME_URL:-}
+      PLUSIM_RUNTIME_TOKEN: ${PLUSIM_RUNTIME_TOKEN:-}
       # Per-agent Gmail (dashboard Tools → Email). This compose has NO env_file,
       # so a key written to docker.env reaches the container ONLY if it is
       # allowlisted here. The `:-` gives an empty string (not a compose warning)
@@ -83,6 +88,11 @@ services:
       CLAUDE_WEB_COOKIE: ${CLAUDE_WEB_COOKIE}
       AGENTGLOB_RUNTIME_URL: ${AGENTGLOB_RUNTIME_URL:-}
       AGENTGLOB_RUNTIME_TOKEN: ${AGENTGLOB_RUNTIME_TOKEN:-}
+      # Per-agent Plusim reports skill (plusim.xyz). Same allowlist rule as the
+      # GMAIL_* pair below: written to docker.env by the operator, reaches the
+      # container only via this list. Empty for agents without the skill.
+      PLUSIM_RUNTIME_URL: ${PLUSIM_RUNTIME_URL:-}
+      PLUSIM_RUNTIME_TOKEN: ${PLUSIM_RUNTIME_TOKEN:-}
       # Per-agent Gmail (dashboard Tools → Email). This compose has NO env_file,
       # so a key written to docker.env reaches the container ONLY if it is
       # allowlisted here. The `:-` gives an empty string (not a compose warning)
