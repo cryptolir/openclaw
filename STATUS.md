@@ -11,9 +11,9 @@
 > One branch = one owner. This table lists **claimed** branches only — for every
 > open PR run `gh pr list --repo cryptolir/openclaw-dashboard`.
 
-| Repo     | Branch                        | PR  | Status | Owner  | Files / Areas Touched                       | Validation | Next Concrete Step | Notes                                         |
-| -------- | ----------------------------- | --- | ------ | ------ | ------------------------------------------- | ---------- | ------------------ | --------------------------------------------- |
-| openclaw | docs/fix-devagents-repo-paths | —   | review | Claude | repo-root handover/protocol docs, STATUS.md | check:docs | merge after review | Repoint dead `/root/projects/openclaw*` paths |
+| Repo     | Branch                        | PR   | Status | Owner  | Files / Areas Touched                       | Validation | Next Concrete Step | Notes                                         |
+| -------- | ----------------------------- | ---- | ------ | ------ | ------------------------------------------- | ---------- | ------------------ | --------------------------------------------- |
+| openclaw | docs/fix-devagents-repo-paths | #112 | review | Claude | repo-root handover/protocol docs, STATUS.md | check:docs | merge after review | Repoint dead `/root/projects/openclaw*` paths |
 
 ---
 
