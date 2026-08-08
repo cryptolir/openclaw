@@ -228,7 +228,7 @@ host port. Config lives at `/root/.openclaw/agents/<agent>/openclaw.json` with s
 `agentav, bob-the-project-manager, designer, familyorganizer, gems, jim-the-ceo, life, projectmanager, raingame, social-bob, thebook, vcode1bot` (productguy deleted 2026-06-10 — invalid bot token). **`life` re-unified onto the fleet image on the 2026-07-10 roll** — the per-user stack + memory-recall (#68/#71/#74/#90) and app-prompt slimming all merged to main, so `v2026.07.10.1` (built from main HEAD `20ddd6dc2`) carries them; life's host-only extensions + graphiti stack are bind-mounted/separate and survive the image swap. Rollback: `docker.env.bak` → `v2026.06.30.1`.
 
 > **2026-07-10 roll — `gateway:v2026.07.10.1`** (source `20ddd6dc2`): ships **OB-16** fallback-on-unresolvable-primary (openclaw #98) + **Venice per-token pricing** (openclaw #100, already on main ahead of #98). Rolled EU (12) + US (12) one-at-a-time, health-checked. Smoke: testingbot/projectmanager/life `smoke-ok`; **life `appUserId` app-path verified** (`chat.send ✓`, the v2026.06.27.1 defective-build canary) since this was a normal cached build. Rollback tags: EU `v2026.06.10.1`, life `v2026.06.30.1`. ⚠️ `v2026.06.27.1` was a DEFECTIVE build (corrupted dist → gateway `chat.send` rejected the app's `appUserId` param → app chat 502, Telegram unaffected); rebuilt clean with `--no-cache` → `v2026.06.30.1`. **Lesson: build-and-push.sh layer cache can emit a bad image from good source — smoke MUST include an `appUserId` payload.**
-
+>
 > `testingbot` (EU) is the safe smoke-test target (config-empty, no MCP deps).
 > `life` (US) carries the per-user memory subsystem (§8).
 

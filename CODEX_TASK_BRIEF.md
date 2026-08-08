@@ -11,7 +11,7 @@ Work from `DevAgents` unless the user explicitly asks otherwise.
 
 ```text
 1. ssh DevAgents
-2. cd /root/projects/openclaw
+2. cd /root/AgentGlob_Apps/openclaw
 3. Read STATUS.md
 4. Read MULTI_AGENT_PROTOCOL.md
 5. Read AGENTS.md
@@ -26,10 +26,10 @@ Repo-root `STATUS.md` is the live source of truth. Do not use the older legacy c
 
 ## 2. Repositories
 
-| Repo      | DevAgents Path                      | Local Mirror Path                       | Remote                                            | Purpose                      |
-| --------- | ----------------------------------- | --------------------------------------- | ------------------------------------------------- | ---------------------------- |
-| Gateway   | `/root/projects/openclaw`           | `/Users/liranperetz/clawdbot-worker`    | `git@github.com:cryptolir/openclaw.git`           | Core runtime, CLI, gateway   |
-| Dashboard | `/root/projects/openclaw-dashboard` | `/Users/liranperetz/openclaw-dashboard` | `git@github.com:cryptolir/openclaw-dashboard.git` | Next.js admin UI (Cloud Run) |
+| Repo      | DevAgents Path                            | Local Mirror Path                       | Remote                                            | Purpose                      |
+| --------- | ----------------------------------------- | --------------------------------------- | ------------------------------------------------- | ---------------------------- |
+| Gateway   | `/root/AgentGlob_Apps/openclaw`           | `/Users/liranperetz/clawdbot-worker`    | `git@github.com:cryptolir/openclaw.git`           | Core runtime, CLI, gateway   |
+| Dashboard | `/root/AgentGlob_Apps/openclaw-dashboard` | `/Users/liranperetz/openclaw-dashboard` | `git@github.com:cryptolir/openclaw-dashboard.git` | Next.js admin UI (Cloud Run) |
 
 Routine development, builds, git operations, and deploy orchestration should happen on DevAgents.
 
@@ -71,7 +71,7 @@ Use `STATUS.md` as canonical, but the current known state is:
 ### Gateway
 
 ```bash
-cd /root/projects/openclaw
+cd /root/AgentGlob_Apps/openclaw
 pnpm install
 pnpm build
 pnpm test
@@ -81,7 +81,7 @@ pnpm check
 ### Dashboard
 
 ```bash
-cd /root/projects/openclaw-dashboard
+cd /root/AgentGlob_Apps/openclaw-dashboard
 npm run build
 ```
 

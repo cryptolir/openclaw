@@ -19,8 +19,8 @@ ssh DevAgents
 Working directories after connecting:
 
 ```bash
-cd /root/projects/openclaw            # gateway/runtime work
-cd /root/projects/openclaw-dashboard  # dashboard/UI/API work
+cd /root/AgentGlob_Apps/openclaw            # gateway/runtime work
+cd /root/AgentGlob_Apps/openclaw-dashboard  # dashboard/UI/API work
 ```
 
 Production hosts for verification only:
@@ -36,17 +36,17 @@ Do not hardcode a production server for an Agent change. Resolve the Agent serve
 
 Read these files in this order before writing code:
 
-1. `/root/projects/openclaw/STATUS.md`
-2. `/root/projects/openclaw/MULTI_AGENT_PROTOCOL.md`
-3. `/root/projects/openclaw/AGENTS.md`
-4. `/root/projects/openclaw/CODEX_TASK_BRIEF.md`
-5. `/root/projects/openclaw-dashboard/AGENTS.md`
-6. `/root/projects/openclaw-dashboard/CLAUDE.md`
+1. `/root/AgentGlob_Apps/openclaw/STATUS.md`
+2. `/root/AgentGlob_Apps/openclaw/MULTI_AGENT_PROTOCOL.md`
+3. `/root/AgentGlob_Apps/openclaw/AGENTS.md`
+4. `/root/AgentGlob_Apps/openclaw/CODEX_TASK_BRIEF.md`
+5. `/root/AgentGlob_Apps/openclaw-dashboard/AGENTS.md`
+6. `/root/AgentGlob_Apps/openclaw-dashboard/CLAUDE.md`
 
 If touching dashboard release flow, also read:
 
 ```bash
-/root/projects/openclaw-dashboard/.github/workflows/deploy.yml
+/root/AgentGlob_Apps/openclaw-dashboard/.github/workflows/deploy.yml
 ```
 
 If touching gateway/runtime deploy flow, also read:
@@ -54,21 +54,21 @@ If touching gateway/runtime deploy flow, also read:
 ```bash
 /opt/openclaw-ops/scripts/build-and-push.sh
 /opt/openclaw-ops/scripts/deploy.sh
-/root/projects/openclaw/docker-compose.yml
+/root/AgentGlob_Apps/openclaw/docker-compose.yml
 ```
 
 ## Current Source Of Truth
 
-- Repo-root `/root/projects/openclaw/STATUS.md` is the live project state.
+- Repo-root `/root/AgentGlob_Apps/openclaw/STATUS.md` is the live project state.
 - Do not use old local/legacy status copies unless the user explicitly asks.
 - Keep GitHub as the source of truth. Before work:
 
 ```bash
-cd /root/projects/openclaw
+cd /root/AgentGlob_Apps/openclaw
 git fetch --all --tags --prune
 git status -sb
 
-cd /root/projects/openclaw-dashboard
+cd /root/AgentGlob_Apps/openclaw-dashboard
 git fetch --all --tags --prune
 git status -sb
 ```
@@ -95,7 +95,7 @@ branch -> typecheck/build -> commit -> PR -> squash merge -> GitHub Actions depl
 Validation:
 
 ```bash
-cd /root/projects/openclaw-dashboard
+cd /root/AgentGlob_Apps/openclaw-dashboard
 npx tsc --noEmit
 npm run build
 ```
@@ -103,24 +103,24 @@ npm run build
 Production:
 
 - URL: `https://app.agentglob.com`
-- CI/CD workflow: `/root/projects/openclaw-dashboard/.github/workflows/deploy.yml`
+- CI/CD workflow: `/root/AgentGlob_Apps/openclaw-dashboard/.github/workflows/deploy.yml`
 - Manual Cloud Run deploy is fallback only, not routine.
 
 Recent relevant dashboard areas:
 
-- Agent config template: `/root/projects/openclaw-dashboard/lib/agent-config-template.ts`
-- Agent config save API: `/root/projects/openclaw-dashboard/app/api/agents/[agentId]/config/route.ts`
-- Public chat API: `/root/projects/openclaw-dashboard/app/api/public/chat/[agentName]/route.ts`
-- Public chat model list: `/root/projects/openclaw-dashboard/app/api/public/chat/[agentName]/models/route.ts`
-- Agent config UI: `/root/projects/openclaw-dashboard/app/dashboard/[workspaceSlug]/agents/[agentId]/page.tsx`
-- Landing chat UI: `/root/projects/openclaw-dashboard/app/chat/[agentName]/page.tsx`
+- Agent config template: `/root/AgentGlob_Apps/openclaw-dashboard/lib/agent-config-template.ts`
+- Agent config save API: `/root/AgentGlob_Apps/openclaw-dashboard/app/api/agents/[agentId]/config/route.ts`
+- Public chat API: `/root/AgentGlob_Apps/openclaw-dashboard/app/api/public/chat/[agentName]/route.ts`
+- Public chat model list: `/root/AgentGlob_Apps/openclaw-dashboard/app/api/public/chat/[agentName]/models/route.ts`
+- Agent config UI: `/root/AgentGlob_Apps/openclaw-dashboard/app/dashboard/[workspaceSlug]/agents/[agentId]/page.tsx`
+- Landing chat UI: `/root/AgentGlob_Apps/openclaw-dashboard/app/chat/[agentName]/page.tsx`
 
 ## Gateway / Runtime Protocol
 
 Default gateway deploy path:
 
 ```bash
-cd /root/projects/openclaw
+cd /root/AgentGlob_Apps/openclaw
 /opt/openclaw-ops/scripts/build-and-push.sh <tag>
 /opt/openclaw-ops/scripts/deploy.sh <tag>
 ```
@@ -135,7 +135,7 @@ vYYYY.M.D.N-hotfix
 Validation:
 
 ```bash
-cd /root/projects/openclaw
+cd /root/AgentGlob_Apps/openclaw
 pnpm install
 pnpm build
 pnpm test
@@ -217,6 +217,6 @@ Before handing off:
 3. Squash-merge if approved/appropriate.
 4. Verify CI/deploy if dashboard changed.
 5. Verify runtime if gateway/Agent config changed.
-6. Update `/root/projects/openclaw/STATUS.md`.
+6. Update `/root/AgentGlob_Apps/openclaw/STATUS.md`.
 7. Sync docs to GitHub.
 8. Leave exact next step and any blockers.

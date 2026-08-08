@@ -29,7 +29,7 @@ don't need to SSH by hand. Use a manual SSH only to dig deeper into a specific f
 1. **Sync the repo**
 
    ```
-   cd /root/projects/openclaw && git checkout main && git pull --rebase origin main
+   cd /root/AgentGlob_Apps/openclaw && git checkout main && git pull --rebase origin main
    ```
 
 2. **Run the diagnostic protocol** (scans BOTH hosts, auto-refreshes the AUTOSCAN block).
@@ -95,7 +95,7 @@ printf 'Subject: %s\nFrom: AgentGlob Diagnostics <onetrue2023@gmail.com>\nTo: li
 > Config lives in `~/.msmtprc` (chmod 600) on the dev server. If a send fails, check
 > `~/.msmtp.log` — the most likely cause is a missing/expired Gmail **app password** in
 > `~/.msmtprc`. As a safety net, also write the summary to
-> `/root/projects/openclaw/scripts/ops/last-diagnostic-summary.txt` so it isn't lost.
+> `/root/AgentGlob_Apps/openclaw/scripts/ops/last-diagnostic-summary.txt` so it isn't lost.
 
 ## Failure handling
 

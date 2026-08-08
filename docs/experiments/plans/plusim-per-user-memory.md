@@ -78,7 +78,7 @@
 
 **Rev 1** · 2026-07-15 · status: draft, for adversarial review
 
-Give Plusim (https://plusim.xyz) app users durable, per-user memory — the same
+Give Plusim (<https://plusim.xyz>) app users durable, per-user memory — the same
 capability `life`/Havaya has — by standing up a Graphiti stack on the EU host and
 wiring the agent `onlyclaw` to it.
 

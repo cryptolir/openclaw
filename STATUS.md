@@ -5,6 +5,18 @@
 
 ---
 
+## Active Branches / PRs
+
+> Claim your branch here BEFORE editing code (`MULTI_AGENT_PROTOCOL.md` §2).
+> One branch = one owner. This table lists **claimed** branches only — for every
+> open PR run `gh pr list --repo cryptolir/openclaw-dashboard`.
+
+| Repo     | Branch                        | PR  | Status | Owner  | Files / Areas Touched                       | Validation | Next Concrete Step | Notes                                         |
+| -------- | ----------------------------- | --- | ------ | ------ | ------------------------------------------- | ---------- | ------------------ | --------------------------------------------- |
+| openclaw | docs/fix-devagents-repo-paths | —   | review | Claude | repo-root handover/protocol docs, STATUS.md | check:docs | merge after review | Repoint dead `/root/projects/openclaw*` paths |
+
+---
+
 ## Last Session
 
 - **Date**: 2026-07-11 (dashboard: team-invite flow SHIPPED — plan #188 + impl #189, owner: Claude)
@@ -232,8 +244,8 @@
 
 ## Validation Commands
 
-- Gateway: `cd /root/projects/openclaw && pnpm install && pnpm build && pnpm test && pnpm check`
-- Dashboard: `cd /root/projects/openclaw-dashboard && npm run build`
+- Gateway: `cd /root/AgentGlob_Apps/openclaw && pnpm install && pnpm build && pnpm test && pnpm check`
+- Dashboard: `cd /root/AgentGlob_Apps/openclaw-dashboard && npm run build`
 
 ---
 
@@ -250,8 +262,8 @@
 - **DevAgents**: `204.168.223.245` — dev server (repos, builds, deploy orchestration)
 - EU prod (1stClaw): `89.167.70.46` — 12 agents
 - US standby (2ndClaw): `5.161.84.219` — 4 agents
-- Gateway repo on DevAgents: `/root/projects/openclaw`
-- Dashboard repo on DevAgents: `/root/projects/openclaw-dashboard`
+- Gateway repo on DevAgents: `/root/AgentGlob_Apps/openclaw`
+- Dashboard repo on DevAgents: `/root/AgentGlob_Apps/openclaw-dashboard`
 - Dashboard prod URL: `https://app.agentglob.com`
 - Always resolve agent server from Firestore before SSH/RPC — never hardcode EU
 - Always use `getAllDashboardOrigins()` not `getDashboardOrigin()` for allowedOrigins

@@ -4,12 +4,12 @@ Work from DevAgents: `ssh DevAgents`
 
 ## Before touching code
 
-1. Read `STATUS.md`, `MULTI_AGENT_PROTOCOL.md`, `CODEX_TASK_BRIEF.md` (in `/root/projects/openclaw/`)
+1. Read `STATUS.md`, `MULTI_AGENT_PROTOCOL.md`, `CODEX_TASK_BRIEF.md` (in `/root/AgentGlob_Apps/openclaw/`)
 2. Confirm Codex's active branches/files in `STATUS.md`
 3. Claim your branch in `STATUS.md` (one branch = one owner)
 4. `cd` into the relevant repo:
-   - Gateway: `/root/projects/openclaw`
-   - Dashboard: `/root/projects/openclaw-dashboard`
+   - Gateway: `/root/AgentGlob_Apps/openclaw`
+   - Dashboard: `/root/AgentGlob_Apps/openclaw-dashboard`
 
 `CLAUDE.md` (-> `AGENTS.md`) is auto-loaded — build commands, deploy protocol, coding style, and git workflow are already in context.
 

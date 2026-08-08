@@ -4,12 +4,12 @@ Work from DevAgents: `ssh DevAgents`
 
 ## Before touching code
 
-1. Read `STATUS.md`, `MULTI_AGENT_PROTOCOL.md`, `AGENTS.md`, `CODEX_TASK_BRIEF.md` (all in `/root/projects/openclaw/`)
+1. Read `STATUS.md`, `MULTI_AGENT_PROTOCOL.md`, `AGENTS.md`, `CODEX_TASK_BRIEF.md` (all in `/root/AgentGlob_Apps/openclaw/`)
 2. Confirm Claude's active branches/files in `STATUS.md`
 3. Claim your branch ownership in `STATUS.md` (one branch = one owner)
 4. `cd` into the relevant repo:
-   - Gateway: `/root/projects/openclaw`
-   - Dashboard: `/root/projects/openclaw-dashboard`
+   - Gateway: `/root/AgentGlob_Apps/openclaw`
+   - Dashboard: `/root/AgentGlob_Apps/openclaw-dashboard`
 
 ## Multi-agent coordination with Claude
 
