@@ -25,7 +25,15 @@ EMAIL_TO=liran@agentglob.com
 EMAIL_FROM="AgentGlob Diagnostics <onetrue2023@gmail.com>"
 # bug_list.md lives in the PRIVATE dashboard repo (moved 2026-07-10 — it carries
 # live infra state that doesn't belong in this public repo).
-DASH_REPO="${DASH_REPO:-/root/AgentGlob_Apps/openclaw-dashboard}"
+# The HUMAN checkout. Never written to, never branch-switched — someone is
+# usually working in it.
+DASH_SHARED="${DASH_SHARED:-/root/AgentGlob_Apps/openclaw-dashboard}"
+# …and OUR OWN worktree of it, permanently detached at origin/main. Before this
+# existed the cron used the shared checkout and skipped whenever a human had it
+# on a branch: measured 53 consecutive skipped runs (2026-08-09), silently, with
+# bug_list, the release report and the deploy log all frozen. A worktree costs
+# one directory and cannot be branch-switched out from under us.
+DASH_REPO="${DASH_REPO:-/root/AgentGlob_Apps/.dashboard-autoscan}"
 BUG_LIST_REL=docs/ops/bug_list.md
 BUG_LIST="$DASH_REPO/$BUG_LIST_REL"
 BUG_LIST_URL=https://github.com/cryptolir/openclaw-dashboard/blob/main/docs/ops/bug_list.md
@@ -47,17 +55,35 @@ echo "diagnostic-cron run @ $(date '+%Y-%m-%d %H:%M:%S %Z')"
 #    uncommitted AUTOSCAN write. Only touch the dashboard checkout on main —
 #    never yank someone's feature branch out from under them.
 git pull -q --rebase --autostash origin main || echo "WARN: git pull failed; continuing with local tree"
-if git -C "$DASH_REPO" rev-parse --git-dir >/dev/null 2>&1; then
-  if [[ "$(git -C "$DASH_REPO" branch --show-current)" == "main" ]]; then
-    git -C "$DASH_REPO" checkout -- "$BUG_LIST_REL" 2>/dev/null || true
-    git -C "$DASH_REPO" checkout -- "$FEATURE_RELEASES_REL" 2>/dev/null || true
-    git -C "$DASH_REPO" pull -q --rebase --autostash origin main \
-      || echo "WARN: dashboard git pull failed; continuing with local tree"
-  else
-    echo "WARN: $DASH_REPO is not on main — bug_list sync will be skipped"
-  fi
+
+# Every WARN that means "today's findings will not reach anyone" goes in here and
+# is reprinted in the EMAIL (step 5) and the SUBJECT. A warning that only ever
+# reaches /var/log is a warning nobody reads — that is the whole reason 53 runs
+# went by unnoticed.
+SYNC_WARNINGS=""
+warn_sync() { echo "WARN: $1"; SYNC_WARNINGS="${SYNC_WARNINGS}⚠ $1"$'\n'; }
+
+if ! git -C "$DASH_SHARED" rev-parse --git-dir >/dev/null 2>&1; then
+  warn_sync "$DASH_SHARED is not a git checkout — bug_list write/sync will fail"
 else
-  echo "WARN: $DASH_REPO is not a git checkout — bug_list write/sync will fail"
+  git -C "$DASH_SHARED" fetch -q origin main \
+    || warn_sync "dashboard fetch failed; continuing with the last synced tree"
+  git -C "$DASH_SHARED" worktree prune 2>/dev/null || true
+  # `.git` in a worktree is a FILE, not a directory — test -e, not -d.
+  if [[ ! -e "$DASH_REPO/.git" ]]; then
+    git -C "$DASH_SHARED" worktree add --detach "$DASH_REPO" origin/main \
+      && echo "→ created AUTOSCAN worktree at $DASH_REPO" \
+      || warn_sync "could not create the AUTOSCAN worktree at $DASH_REPO"
+  fi
+  # Hard-reset to origin/main every run. Detached on purpose: there is no branch
+  # to switch, so no human action can disable this. A commit that failed to push
+  # last run is discarded here rather than accumulating — the scan regenerates
+  # its own content daily, so replaying is always cheaper than reconciling.
+  if [[ -e "$DASH_REPO/.git" ]]; then
+    git -C "$DASH_REPO" checkout -q --detach origin/main 2>/dev/null \
+      && git -C "$DASH_REPO" reset -q --hard origin/main \
+      || warn_sync "could not pin $DASH_REPO to origin/main"
+  fi
 fi
 
 # 2. Run the scan (writes the AUTOSCAN block) and capture the full report.
@@ -99,15 +125,18 @@ done
 
 # 3. Commit + push the refreshed bug list in the dashboard repo (only if it
 #    actually changed, and only from main — see the step-1 guard).
-if [[ "$(git -C "$DASH_REPO" branch --show-current 2>/dev/null)" == "main" ]] \
-   && ! git -C "$DASH_REPO" diff --quiet "$BUG_LIST_REL" 2>/dev/null; then
+if ! git -C "$DASH_REPO" diff --quiet "$BUG_LIST_REL" 2>/dev/null; then
   git -C "$DASH_REPO" add "$BUG_LIST_REL"
-  git -C "$DASH_REPO" commit -q -m "ops: automated bug_list AUTOSCAN refresh $(date +%F)" \
-    && git -C "$DASH_REPO" push -q origin main \
-    && echo "→ bug_list.md committed + pushed (dashboard repo)" \
-    || echo "WARN: commit/push failed (dashboard repo)"
+  # Detached HEAD, so the refspec is explicit. A rejected push means someone
+  # else moved main between our fetch and now — next run rebases onto it.
+  if git -C "$DASH_REPO" commit -q -m "ops: automated bug_list AUTOSCAN refresh $(date +%F)" \
+     && git -C "$DASH_REPO" push -q origin HEAD:main; then
+    echo "→ bug_list.md committed + pushed (dashboard repo)"
+  else
+    warn_sync "bug_list commit/push failed — today's findings are NOT on main"
+  fi
 else
-  echo "→ bug_list.md unchanged (or dashboard not on main); nothing to push"
+  echo "→ bug_list.md unchanged; nothing to push"
 fi
 
 # 4. Trigger the daily release report, then refresh the deploy log. This run IS
@@ -117,8 +146,8 @@ fi
 #    diagnostic. Plan: openclaw-dashboard docs/plans/release-notify-cron.md.
 if [[ -z "${CRON_SECRET:-}" ]]; then
   echo "→ CRON_SECRET unset; skipping release report + deploy-log refresh"
-elif [[ "$(git -C "$DASH_REPO" branch --show-current 2>/dev/null)" != "main" ]]; then
-  echo "→ dashboard not on main; skipping release report + deploy-log refresh"
+elif [[ ! -e "$DASH_REPO/.git" ]]; then
+  warn_sync "no AUTOSCAN worktree — skipping release report + deploy-log refresh"
 else
   RN_OUT=/var/tmp/agentglob-release-notify.out
   RN_CODE="$(curl -sS --max-time 300 -o "$RN_OUT" -w '%{http_code}' \
@@ -155,7 +184,7 @@ else
       if [[ -n "$(git -C "$DASH_REPO" status --porcelain -- "$FEATURE_RELEASES_REL" 2>/dev/null)" ]]; then
         git -C "$DASH_REPO" add "$FEATURE_RELEASES_REL"
         git -C "$DASH_REPO" commit -q -m "ops: refresh deploy log $(date +%F)" \
-          && git -C "$DASH_REPO" push -q origin main \
+          && git -C "$DASH_REPO" push -q origin HEAD:main \
           && echo "→ feature-releases.md committed + pushed ($NEW_N entries)" \
           || echo "WARN: feature-releases.md commit/push failed (dashboard repo)"
       else
@@ -171,12 +200,18 @@ fi
 # 5. Email the report. Subject carries the P0..P3 totals at a glance.
 COUNTS="$(printf '%s\n' "$REPORT" | grep -oE 'Totals:.*' | tail -1)"
 SUBJECT="[AgentGlob] Fleet diagnostic $(date +%F) — ${COUNTS:-scan complete}"
+# A sync failure means the findings below never reached the repo. Put it in the
+# SUBJECT: the log line alone went unread for 53 runs.
+[[ -n "$SYNC_WARNINGS" ]] && SUBJECT="⚠ SYNC FAILED — $SUBJECT"
 if command -v msmtp >/dev/null 2>&1; then
   {
     printf 'Subject: %s\n' "$SUBJECT"
     printf 'From: %s\n' "$EMAIL_FROM"
     printf 'To: %s\n' "$EMAIL_TO"
     printf 'Content-Type: text/plain; charset=UTF-8\n\n'
+    if [[ -n "$SYNC_WARNINGS" ]]; then
+      printf '═══════ ⚠ AUTOSCAN SYNC FAILED ═══════\n%s\nThe findings below were produced but may NOT be committed to bug_list.md.\nSee /var/log/agentglob-diag.log\n\n' "$SYNC_WARNINGS"
+    fi
     printf '%s\n\n' "$REPORT"
     MODELS_REPORT_FILE=/var/tmp/agentglob-models-report.txt
     if [[ -f "$MODELS_REPORT_FILE" && -n "$(find "$MODELS_REPORT_FILE" -mmin -360 2>/dev/null)" ]]; then
