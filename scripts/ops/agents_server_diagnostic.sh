@@ -25,6 +25,7 @@
 #   - provider model-discovery timeout (e.g. venice) ............ P2
 #   - disk >= DISK_WARN% ........................................ P2
 #   - no docker log rotation (unbounded logs) ................... P2
+#   - docker.env key not reaching the container ................. P2
 #   - agent session dir large (>SESSION_DIR_WARN_MB MiB) ......... P2
 #   - agent workspace dir large (>WORKSPACE_DIR_WARN_MB MiB) ..... P1
 #   - mcp-bridge "No servers configured" noise .................. P3
@@ -57,6 +58,31 @@ SWAP_USED_WARN=1024   # MiB swap in use → P1 above this (thrashing)
 LOG_SINCE="30m"       # gateway-log lookback window
 SESSION_DIR_WARN_MB=100   # MiB per-agent sessions/ dir  → P2
 WORKSPACE_DIR_WARN_MB=500 # MiB per-agent workspace/ dir → P1
+# Keys that legitimately sit in docker.env WITHOUT being forwarded, so the
+# env-forwarding check above stays quiet about them:
+#   OPENCLAW_IMAGE / CONFIG_DIR / WORKSPACE_DIR / *_PORT - consumed by compose
+#     itself for interpolation; they were never meant to reach the container.
+#     OPENCLAW_GATEWAY_BIND is the same, one step further removed: compose
+#     interpolates it into the gateway COMMAND ("${OPENCLAW_GATEWAY_BIND:-lan}"),
+#     so the value arrives as an argv entry, never as an env var. Verified
+#     2026-08-09 by the check itself flagging it on all 13 US agents.
+#   NVIDIA_API_KEY - provider retired in the OpenRouter migration.
+#   WALLET_PRIVATE_KEY, RAIN_API_KEY - written by the dashboard Core Package UI
+#     but read by nothing (verified 2026-08-09: zero refs across openclaw src/
+#     and skills/). If either gains a consumer, remove it here and add it to the
+#     compose allowlist instead - do not silence a key that is actually used.
+#   OPENCLAW_HOME_VOLUME / EXTRA_MOUNTS / DOCKER_APT_PACKAGES - deploy-level
+#     knobs consumed while BUILDING the compose invocation, like the paths above.
+#   HYPERLIQUID_PRIVATE_KEY, GOG_KEYRING_PASSWORD, GOG_KEYRING_BACKEND - carried
+#     by the EU host older provisioning template; zero readers in openclaw src/
+#     or skills/ (verified 2026-08-09), i.e. dead entries rather than a
+#     forwarding bug.
+#
+# Deliberately NOT silenced, because they DO have readers and so a missing
+# forward is a real fault: GEMINI_API_KEY (16 refs), RPC_URL (2 refs). The first
+# run of this check found GEMINI_API_KEY on an EU agent with no compose entry -
+# a fifth instance of the OB-21 class, which is the whole point of the check.
+ENV_FORWARD_IGNORE="OPENCLAW_IMAGE OPENCLAW_CONFIG_DIR OPENCLAW_WORKSPACE_DIR OPENCLAW_GATEWAY_PORT OPENCLAW_BRIDGE_PORT OPENCLAW_GATEWAY_BIND OPENCLAW_HOME_VOLUME OPENCLAW_EXTRA_MOUNTS OPENCLAW_DOCKER_APT_PACKAGES NVIDIA_API_KEY WALLET_PRIVATE_KEY RAIN_API_KEY HYPERLIQUID_PRIVATE_KEY GOG_KEYRING_PASSWORD GOG_KEYRING_BACKEND"
 
 # ── Args ─────────────────────────────────────────────────────────────────────
 SELECT="" ; WRITE=1
@@ -86,7 +112,7 @@ remote_probe() {
   local name="$1" ip="$2"
   ssh -i "$SSH_KEY" -o ConnectTimeout=15 -o BatchMode=yes -o StrictHostKeyChecking=accept-new \
       "root@${ip}" \
-      "HOST_NAME='${name}' LOG_SINCE='${LOG_SINCE}' DISK_WARN='${DISK_WARN}' DISK_CRIT='${DISK_CRIT}' MEM_AVAIL_WARN='${MEM_AVAIL_WARN}' SWAP_USED_WARN='${SWAP_USED_WARN}' SESSION_DIR_WARN_MB='${SESSION_DIR_WARN_MB}' WORKSPACE_DIR_WARN_MB='${WORKSPACE_DIR_WARN_MB}' bash -s" 2>/dev/null <<'REMOTE'
+      "HOST_NAME='${name}' LOG_SINCE='${LOG_SINCE}' DISK_WARN='${DISK_WARN}' DISK_CRIT='${DISK_CRIT}' MEM_AVAIL_WARN='${MEM_AVAIL_WARN}' SWAP_USED_WARN='${SWAP_USED_WARN}' SESSION_DIR_WARN_MB='${SESSION_DIR_WARN_MB}' WORKSPACE_DIR_WARN_MB='${WORKSPACE_DIR_WARN_MB}' ENV_FORWARD_IGNORE='${ENV_FORWARD_IGNORE}' bash -s" 2>/dev/null <<'REMOTE'
 set -uo pipefail
 H="${HOST_NAME:-?}"
 em(){ printf '%s\n' "$*"; }
@@ -189,6 +215,32 @@ for cname in $(docker ps -a --format '{{.Names}}' | grep -- '-openclaw-gateway-1
   lograte=$(docker logs --since 1h "$cname" 2>&1 | wc -c)
   if [ "${lograte:-0}" -gt $((5 * 1024 * 1024)) ]; then
     em "ISSUE|P2|$H|$agent|High log write rate|$((lograte / 1024 / 1024))MB of log output in the last hour — likely a tight error loop."
+  fi
+
+  # ── env forwarding: a docker.env key that never reaches the container ─────
+  # docker-compose.yml has NO `env_file`, so a per-agent key is delivered only
+  # if it is ALSO named in both compose `environment:` blocks. Forget that and
+  # the feature ships silently broken: the dashboard saves the key and reports
+  # success while the agent behaves as if it were never set. This class has
+  # bitten four times (AGENTGLOB_RUNTIME_*, GMAIL_*/GCAL_*, HERE_NOW, and the
+  # grid skill) and every time a human found it days later — see OB-22 / OB-21.
+  #
+  # Deliberately checked by SYMPTOM rather than against a list of key names:
+  # "present on disk, absent in the container" needs no knowledge of which keys
+  # exist, so a key invented next month is covered without editing this script.
+  # It also catches host compose drift, which a name-list check would miss.
+  if [ -f "$envf" ]; then
+    _cenv=$(docker exec "$cname" env 2>/dev/null | cut -d= -f1 | sort -u)   # one exec per agent, not per key
+    if [ -n "$_cenv" ]; then
+      _missing=""
+      for _k in $(grep -oE "^[A-Za-z_][A-Za-z0-9_]*=" "$envf" 2>/dev/null | tr -d "=" | sort -u); do
+        case " $ENV_FORWARD_IGNORE " in *" $_k "*) continue ;; esac
+        printf "%s\n" "$_cenv" | grep -qx "$_k" || _missing="${_missing}${_k} "
+      done
+      if [ -n "$_missing" ]; then
+        em "ISSUE|P2|$H|$agent|Key in docker.env never reaches the container|Saved for this agent but missing from its container env: ${_missing}- so any skill needing it fails as though unconfigured, while the dashboard shows it set. Cause is nearly always the compose allowlist: add the key to BOTH service blocks in /opt/openclaw/docker-compose.yml (with a :- default so agents without it are unaffected), then recreate the agent with: cd /opt/openclaw && docker compose -p ${agent} --env-file ${envf} up -d openclaw-gateway. If the key IS already in the repo compose, then THIS HOST has drifted - reconcile /opt/openclaw to main."
+      fi
+    fi
   fi
 
   # ── per-agent disk: sessions + workspace (outside docker log rotation) ────
