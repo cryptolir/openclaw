@@ -166,8 +166,17 @@ for cname in $(docker ps -a --format '{{.Names}}' | grep -- '-openclaw-gateway-1
     && em "ISSUE|P1|$H|$agent|Gateway uncaught exception|EPIPE/Uncaught in last ${LOG_SINCE} — likely a plugin/MCP server crash (see mcp-bridge)."
   printf '%s' "$logs" | grep -qiE 'typing TTL reached|no reply|aborted due to timeout' \
     && em "ISSUE|P1|$H|$agent|Model not responding|typing-TTL / no-reply / timeout in logs — primary model may be hanging or invalid."
-  printf '%s' "$logs" | grep -qiE 'setMyCommands.*401|: 401|Unauthorized' \
-    && em "ISSUE|P1|$H|$agent|Auth/token failure (401)|401/Unauthorized in logs — bot token or API key likely invalid."
+  # Two DIFFERENT failures used to share this rule, and the shared remedy was
+  # wrong for one of them. Measured on us/projectmanager (2026-08-09): the only
+  # matches were two `[ws] unauthorized … reason=token_mismatch` lines, and the
+  # row told the reader to go rotate a bot token or an API key — neither of
+  # which is involved. `Unauthorized` here is the GATEWAY's own auth handshake,
+  # not a provider 401. Genuine revoked-credential cases are already caught,
+  # correctly, by the `terminal channel error` rule below.
+  printf '%s' "$logs" | grep -qiE 'setMyCommands.*401|: 401' \
+    && em "ISSUE|P1|$H|$agent|Provider auth failure (401)|A 401 from an upstream API in the last ${LOG_SINCE} — bot token or API key likely invalid."
+  printf '%s' "$logs" | grep -q 'reason=token_mismatch' \
+    && em "ISSUE|P1|$H|$agent|Gateway token mismatch|The dashboard and this container disagree on the gateway token, so calls are refused before reaching the model — chat fails with a generic error. NOT a bot token or API key. Restart the container (it re-reads its config on boot); if it recurs, redeploy."
   printf '%s' "$logs" | grep -qiE 'Discovery attempt failed: TimeoutError' \
     && em "ISSUE|P2|$H|$agent|Model-provider discovery timeout|A provider (e.g. venice) discovery is timing out; fallback may be impaired."
   printf '%s' "$logs" | grep -qiE 'No servers configured' \
