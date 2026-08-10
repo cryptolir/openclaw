@@ -31,7 +31,7 @@ ssh 1stclaw 'docker exec <agent-name>-openclaw-gateway-1 ls /opt/openclaw/skills
 
 | Thing                       | Location                                                                      |
 | --------------------------- | ----------------------------------------------------------------------------- |
-| Gateway repo (build source) | `root@204.168.223.245:/root/projects/openclaw`                                |
+| Gateway repo (build source) | `root@204.168.223.245:/root/AgentGlob_Apps/openclaw`                          |
 | Build script                | `/opt/openclaw-ops/scripts/build-and-push.sh` (on DevAgents)                  |
 | Deploy script               | `/opt/openclaw-ops/scripts/deploy.sh` (on DevAgents)                          |
 | Image registry              | `europe-west1-docker.pkg.dev/gold-verve-459312-e7/openclaw-gateway/gateway`   |
@@ -81,7 +81,7 @@ What this does:
 
 1. Resolves a tag (auto: today's date + next sequence number, queried from
    Artifact Registry) or uses the one you passed.
-2. `cd /root/projects/openclaw`, `git checkout main`, `git pull --rebase`.
+2. `cd /root/AgentGlob_Apps/openclaw`, `git checkout main`, `git pull --rebase`.
 3. `DOCKER_BUILDKIT=1 docker build --build-arg OPENCLAW_INSTALL_BROWSER=1 -t <image>:<tag> -t <image>:latest .`
 4. `docker push <image>:<tag>` and `<image>:latest`.
 5. Prints the tag, source SHA, and the next-step API hints.

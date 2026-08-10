@@ -56,8 +56,8 @@
 
 - Primary development host: `DevAgents` (`root@204.168.223.245` via `ssh DevAgents`).
 - All routine development, builds, git operations, and deployments now happen on and from the DevAgents server, not from the local Mac unless the user explicitly asks otherwise.
-- Gateway repo on DevAgents: `/root/projects/openclaw`
-- Dashboard repo on DevAgents: `/root/projects/openclaw-dashboard`
+- Gateway repo on DevAgents: `/root/AgentGlob_Apps/openclaw`
+- Dashboard repo on DevAgents: `/root/AgentGlob_Apps/openclaw-dashboard`
 - One branch = one owner (Claude or Codex). Never touch the other agent's active branch.
 - Check STATUS.md before creating a branch to avoid file/area conflicts.
 - Update STATUS.md at session end with what you did, branch name, and owner.

@@ -25,7 +25,7 @@ Ownership is tracked in the repo-root `STATUS.md` under "Active Branches / PRs".
 
 **Source of truth**: repo-root `STATUS.md`
 
-- On DevAgents: `/root/projects/openclaw/STATUS.md`
+- On DevAgents: `/root/AgentGlob_Apps/openclaw/STATUS.md`
 - In the local mirror: `/Users/liranperetz/clawdbot-worker/STATUS.md`
 - Do **not** use the older copy at `/Users/liranperetz/Claw_01_on_Hetzner_server/STATUS.md` unless the user explicitly asks for it.
 
@@ -61,8 +61,8 @@ Routine development now happens on `DevAgents`, not the local Mac mirror.
 
 - SSH: `ssh DevAgents`
 - Host: `root@204.168.223.245`
-- Gateway repo: `/root/projects/openclaw`
-- Dashboard repo: `/root/projects/openclaw-dashboard`
+- Gateway repo: `/root/AgentGlob_Apps/openclaw`
+- Dashboard repo: `/root/AgentGlob_Apps/openclaw-dashboard`
 
 Local Mac mirrors are for reference unless the user explicitly asks otherwise.
 
@@ -119,11 +119,11 @@ No direct pushes to `main`.
 
 ## 6. Repository Map
 
-| Repo              | DevAgents Path                      | Local Mirror                            | Remote                         | Purpose                            |
-| ----------------- | ----------------------------------- | --------------------------------------- | ------------------------------ | ---------------------------------- |
-| Gateway (core)    | `/root/projects/openclaw`           | `/Users/liranperetz/clawdbot-worker`    | `cryptolir/openclaw`           | OpenClaw gateway, CLI, runtime     |
-| Dashboard         | `/root/projects/openclaw-dashboard` | `/Users/liranperetz/openclaw-dashboard` | `cryptolir/openclaw-dashboard` | Next.js admin dashboard            |
-| Coordination docs | `/root/projects/openclaw`           | `/Users/liranperetz/clawdbot-worker`    | —                              | `STATUS.md`, protocols, task brief |
+| Repo              | DevAgents Path                            | Local Mirror                            | Remote                         | Purpose                            |
+| ----------------- | ----------------------------------------- | --------------------------------------- | ------------------------------ | ---------------------------------- |
+| Gateway (core)    | `/root/AgentGlob_Apps/openclaw`           | `/Users/liranperetz/clawdbot-worker`    | `cryptolir/openclaw`           | OpenClaw gateway, CLI, runtime     |
+| Dashboard         | `/root/AgentGlob_Apps/openclaw-dashboard` | `/Users/liranperetz/openclaw-dashboard` | `cryptolir/openclaw-dashboard` | Next.js admin dashboard            |
+| Coordination docs | `/root/AgentGlob_Apps/openclaw`           | `/Users/liranperetz/clawdbot-worker`    | —                              | `STATUS.md`, protocols, task brief |
 
 Routine development, builds, git operations, and deployments happen on **DevAgents** unless the user explicitly asks to work from the local Mac.
 
@@ -193,7 +193,7 @@ When one agent finishes a task the other agent should continue:
 
 ```text
 [ ] ssh DevAgents
-[ ] cd /root/projects/openclaw
+[ ] cd /root/AgentGlob_Apps/openclaw
 [ ] Read STATUS.md, MULTI_AGENT_PROTOCOL.md, AGENTS.md, CODEX_TASK_BRIEF.md
 [ ] Check git status and current branch
 [ ] Confirm no overlap with the other agent before editing
