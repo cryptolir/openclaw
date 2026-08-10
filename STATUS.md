@@ -19,6 +19,57 @@
 
 ## Last Session
 
+- **Date**: 2026-08-10 (dashboard: plan-review-verdict logic hardened + merged, owner: Claude)
+- **Repo**: openclaw-dashboard (branch docs/review-verdict-fail-closed, squash-merged)
+- **What changed**:
+  - **PR #306** (`docs(protocol): treat an unsignalled Codex review as no-verdict, not approval`,
+    merged `bc44ebe`): closed a hole in `docs/PLAN_REVIEW_PROTOCOL.md` §3/§5 where a Codex app
+    review with no inline findings was treated as `approved` — indistinguishable from a review
+    that started and never finished, since the app's review body is identical boilerplate either
+    way. Verified the app's real approval signal is a content-matched 👍 (`+1`) reaction on the PR
+    (`issues/<n>/reactions`), never the review body itself. Rewrote both
+    `docs/PLAN_REVIEW_PROTOCOL.md` and the `claude.yml` automation prompt (kept in sync) to: (1)
+    require that 👍, bound to the specific review whose `Reviewed commit` stamp is a **prefix** of
+    current head (never full-SHA equality — Codex stamps ~10 chars); (2) add an explicit
+    `no-clear-verdict` outcome that stops and escalates to the owner with a status report instead
+    of resolving ambiguity as approval; (3) give contradictory signals (👍 + unresolved findings)
+    priority over folding.
+  - **4 rounds of Codex adversarial review folded on the review-logic itself** (Rev 2-5, all on
+    PR #306): F1/F2 reaction-to-commit binding + fail-closed stamp parsing; F3 contradictory-signal
+    ordering (also caught my own bug: staleness was blocking folding, not just approval — fixed,
+    folding can't merge anything so a stale finding is still a finding); F6/F7 a stale command
+    block reintroducing F1's exact hole, and a retry that couldn't actually sleep
+    (`--allowedTools` had no `sleep`); F8 abbreviated-vs-full SHA comparison — fixing this example
+    surfaced the same "equals head" assumption load-bearing in the `claude.yml` prompt itself,
+    where literal equality would have made `APPROVED` unreachable forever. Findings per round:
+    3 → 2 → 2 → 1, zero P1s in the final round — merged at the round-4 circuit-breaker bound per
+    owner decision rather than requesting a 5th.
+  - **Root cause of the automated loop being fully manual since ~Jul 9**: `CLAUDE_CODE_OAUTH_TOKEN`
+    in both the GitHub repo secret and this server's `~/.bashrc` does not match the `sk-ant-*`
+    shape a real `claude setup-token` value has (server value confirmed 92 bytes, no `sk-ant-`
+    prefix — some other key was pasted in). `claude.yml` has been failing 100ms into every run
+    with `API Error: Header 'Authorization' has invalid value` since 2026-08-08 09:42. **Not yet
+    fixed — needs the owner to mint a fresh token via `claude setup-token` (browser approval
+    required) and re-set it in both places**, `~/.bashrc` line 100 in particular, since the bad
+    value was pasted into this chat while diagnosing it and should be treated as exposed either
+    way.
+  - **Separately**: `openclaw` PR #112 (`docs(fix): repoint dead /root/projects/openclaw* paths`)
+    fixed 45 dead-path references across 9 files in `MULTI_AGENT_PROTOCOL.md`/`AGENTS.md`/etc. that
+    pointed at `/root/projects/openclaw-dashboard`, which does not exist (real path is
+    `/root/AgentGlob_Apps/openclaw-dashboard`); added the `Active Branches / PRs` table this file
+    now has at the top. **Still open (#112), not yet merged** — see the table above.
+- **Validation**: PR #306: `npx tsc --noEmit` clean on every Rev; `claude.yml` re-validated as
+  parseable YAML after every edit; grepped for leftover "EQUALS" after the Rev 5 fix to confirm
+  none remained; `terminology` CI check passing pre-merge. Doc-only change, no source touched, so
+  build/tests are unaffected.
+- **Follow-ups**: **owner must rotate `CLAUDE_CODE_OAUTH_TOKEN`** (repo secret + server
+  `~/.bashrc`) before either the GitHub Action or the manual DevAgents fallback can run again —
+  until then every plan-review round on every PR is fully manual; merge `openclaw` #112; PR #284
+  (`plan: AgentGlob MCP`) is a separate session's branch, sitting at its own round-4 circuit-breaker
+  bound as of 2026-08-08, unrelated to this work and not touched here.
+
+## Last Session (prev)
+
 - **Date**: 2026-07-11 (dashboard: team-invite flow SHIPPED — plan #188 + impl #189, owner: Claude)
 - **Repo**: openclaw-dashboard (branches plan/team-invite-flow + feat/team-invite-flow, both squash-merged)
 - **What changed**:
