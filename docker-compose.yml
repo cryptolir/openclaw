@@ -44,15 +44,6 @@ services:
       # Same allowlist rule as the GMAIL_*/GCAL_* keys above: with no env_file,
       # a per-agent docker.env key reaches the container ONLY if listed here.
       HERE_NOW: ${HERE_NOW:-}
-      # ostium skill (skills/ostium/SKILL.md) — RPC_URL gates whether the
-      # skill loads at all; PRIVATE_KEY is required only for write actions.
-      # Same allowlist rule as every other key in this file: with no
-      # env_file, a docker.env value reaches the container ONLY if listed
-      # here. Found missing fleet-wide by the OB-22 diagnostic guard
-      # (openclaw #114) on its first run — all 16 EU agents had RPC_URL +
-      # PRIVATE_KEY saved in docker.env with an empty container env.
-      RPC_URL: ${RPC_URL:-}
-      PRIVATE_KEY: ${PRIVATE_KEY:-}
       # nano-banana-pro skill (image generation) and summarize's optional
       # Gemini path. Found missing on eu/mystory by the same OB-22 guard —
       # 16 code readers across two skills, zero compose entries.
@@ -128,15 +119,6 @@ services:
       # Same allowlist rule as the GMAIL_*/GCAL_* keys above: with no env_file,
       # a per-agent docker.env key reaches the container ONLY if listed here.
       HERE_NOW: ${HERE_NOW:-}
-      # ostium skill (skills/ostium/SKILL.md) — RPC_URL gates whether the
-      # skill loads at all; PRIVATE_KEY is required only for write actions.
-      # Same allowlist rule as every other key in this file: with no
-      # env_file, a docker.env value reaches the container ONLY if listed
-      # here. Found missing fleet-wide by the OB-22 diagnostic guard
-      # (openclaw #114) on its first run — all 16 EU agents had RPC_URL +
-      # PRIVATE_KEY saved in docker.env with an empty container env.
-      RPC_URL: ${RPC_URL:-}
-      PRIVATE_KEY: ${PRIVATE_KEY:-}
       # nano-banana-pro skill (image generation) and summarize's optional
       # Gemini path. Found missing on eu/mystory by the same OB-22 guard —
       # 16 code readers across two skills, zero compose entries.
