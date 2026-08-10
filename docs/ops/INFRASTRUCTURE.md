@@ -78,11 +78,11 @@ gateway-token path documented in §9.
 Live today for **wallet** and **Rain**. A new native integration should need only these 5
 steps — no custom credential storage.
 
-| Category                                        | Source                                             | Activation                                                                                  |
-| ----------------------------------------------- | -------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| **A — OpenClaw-bundled**                        | runtime image `/opt/openclaw/skills/`              | may be default-on per agent template                                                        |
-| **B1 — workspace-shared** (`wallet`)            | `openclaw/skills/<name>` + `/api/runtime/<name>/*` | **loose** — workspace-secret presence activates for all agents in the workspace             |
-| **B2 — per-agent** (`rain`, future `ostium`, …) | `openclaw/skills/<name>` + `/api/runtime/<name>/*` | **strict** — explicit per-agent selection required; secret presence alone does not activate |
+| Category                             | Source                                             | Activation                                                                                  |
+| ------------------------------------ | -------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| **A — OpenClaw-bundled**             | runtime image `/opt/openclaw/skills/`              | may be default-on per agent template                                                        |
+| **B1 — workspace-shared** (`wallet`) | `openclaw/skills/<name>` + `/api/runtime/<name>/*` | **loose** — workspace-secret presence activates for all agents in the workspace             |
+| **B2 — per-agent** (`rain`, …)       | `openclaw/skills/<name>` + `/api/runtime/<name>/*` | **strict** — explicit per-agent selection required; secret presence alone does not activate |
 
 Full activation matrix + required dashboard changes:
 `openclaw-dashboard/PLATFORM_INTEGRATIONS_V1_ARCHITECTURE.md` §1a.

@@ -339,17 +339,6 @@
     }
   },
   {
-    "contentHash": "sha256:6a4f70e65354985fb047d802ab180755127f7769df311f5ccb51546ca91cafb5",
-    "description": "Use the Ostium tool for Arbitrum market reads and live trade writes (open/close/update).",
-    "emoji": "",
-    "name": "ostium",
-    "path": "skills/ostium/SKILL.md",
-    "requires": {
-      "bins": ["python3"],
-      "env": ["RPC_URL"]
-    }
-  },
-  {
     "contentHash": "sha256:bb06f126ec6c0d2dd6b1a8eb0affe60d6389b95af2ffc91fd9cc937d5c9b9c44",
     "description": "Capture and automate macOS UI with the Peekaboo CLI.",
     "emoji": "👀",
