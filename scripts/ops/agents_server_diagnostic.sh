@@ -190,8 +190,18 @@ for cname in $(docker ps -a --format '{{.Names}}' | grep -- '-openclaw-gateway-1
   logs=$(docker logs "$cname" --since "$LOG_SINCE" 2>&1)
   printf '%s' "$logs" | grep -qiE 'Uncaught exception|EPIPE' \
     && em "ISSUE|P1|$H|$agent|Gateway uncaught exception|EPIPE/Uncaught in last ${LOG_SINCE} — likely a plugin/MCP server crash (see mcp-bridge)."
-  printf '%s' "$logs" | grep -qiE 'typing TTL reached|no reply|aborted due to timeout' \
-    && em "ISSUE|P1|$H|$agent|Model not responding|typing-TTL / no-reply / timeout in logs — primary model may be hanging or invalid."
+  # `aborted due to timeout` was REMOVED from this pattern 2026-08-10. It matched
+  # the venice model-DISCOVERY timeout, which the P2 rule below already reports
+  # correctly — so one boot-time line raised two issues, and this one told the
+  # reader to go look at a hanging or invalid primary model, which is not what
+  # happened. Discovery runs at startup, so EVERY fleet recreate produced a wave
+  # of these: a 15-agent EU roll produced 13 (measured; on researcher the sole
+  # match was one line 32s after container start, with zero user-facing failures
+  # after it). Same shape as the 401 rule above — two different failures sharing
+  # one rule, the remedy wrong for one of them. This rule now keeps only the
+  # signals that mean a real request went unanswered.
+  printf '%s' "$logs" | grep -qiE 'typing TTL reached|no reply' \
+    && em "ISSUE|P1|$H|$agent|Model not responding|typing-TTL / no-reply in logs — a request went unanswered; primary model may be hanging or invalid."
   # Two DIFFERENT failures used to share this rule, and the shared remedy was
   # wrong for one of them. Measured on us/projectmanager (2026-08-09): the only
   # matches were two `[ws] unauthorized … reason=token_mismatch` lines, and the
