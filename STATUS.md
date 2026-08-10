@@ -11,9 +11,8 @@
 > One branch = one owner. This table lists **claimed** branches only — for every
 > open PR run `gh pr list --repo cryptolir/openclaw-dashboard`.
 
-| Repo     | Branch                        | PR   | Status | Owner  | Files / Areas Touched                       | Validation | Next Concrete Step | Notes                                         |
-| -------- | ----------------------------- | ---- | ------ | ------ | ------------------------------------------- | ---------- | ------------------ | --------------------------------------------- |
-| openclaw | docs/fix-devagents-repo-paths | #112 | review | Claude | repo-root handover/protocol docs, STATUS.md | check:docs | merge after review | Repoint dead `/root/projects/openclaw*` paths |
+| Repo | Branch | PR  | Status | Owner | Files / Areas Touched | Validation | Next Concrete Step | Notes |
+| ---- | ------ | --- | ------ | ----- | --------------------- | ---------- | ------------------ | ----- |
 
 ---
 
@@ -44,29 +43,46 @@
     where literal equality would have made `APPROVED` unreachable forever. Findings per round:
     3 → 2 → 2 → 1, zero P1s in the final round — merged at the round-4 circuit-breaker bound per
     owner decision rather than requesting a 5th.
-  - **Root cause of the automated loop being fully manual since ~Jul 9**: `CLAUDE_CODE_OAUTH_TOKEN`
-    in both the GitHub repo secret and this server's `~/.bashrc` does not match the `sk-ant-*`
-    shape a real `claude setup-token` value has (server value confirmed 92 bytes, no `sk-ant-`
-    prefix — some other key was pasted in). `claude.yml` has been failing 100ms into every run
-    with `API Error: Header 'Authorization' has invalid value` since 2026-08-08 09:42. **Not yet
-    fixed — needs the owner to mint a fresh token via `claude setup-token` (browser approval
-    required) and re-set it in both places**, `~/.bashrc` line 100 in particular, since the bad
-    value was pasted into this chat while diagnosing it and should be treated as exposed either
-    way.
-  - **Separately**: `openclaw` PR #112 (`docs(fix): repoint dead /root/projects/openclaw* paths`)
-    fixed 45 dead-path references across 9 files in `MULTI_AGENT_PROTOCOL.md`/`AGENTS.md`/etc. that
-    pointed at `/root/projects/openclaw-dashboard`, which does not exist (real path is
-    `/root/AgentGlob_Apps/openclaw-dashboard`); added the `Active Branches / PRs` table this file
-    now has at the top. **Still open (#112), not yet merged** — see the table above.
+  - **The `CLAUDE_CODE_OAUTH_TOKEN` outage is FIXED** (owner, 2026-08-08 19:16). Root cause is
+    worth keeping: `claude setup-token` prints ANSI colour codes, and a terminal narrower than the
+    108-char token wraps it — either one embeds bytes that are illegal in an HTTP header, so
+    `claude.yml` died 100ms into every run with `API Error: Header 'Authorization' has invalid
+value` from 2026-08-08 09:42. Use `NO_COLOR=1`, widen past 200 columns, and assert length 108
+    on one unbroken line. Two traps documented in `claude.yml`'s header: the local CLI **cannot**
+    verify a token (with a saved login it ignores the env var entirely, so "works locally" is
+    always false), and the real test is curling `api.anthropic.com/v1/messages` — 401 = bad token,
+    429 rate_limit = auth OK.
+  - **Cost of not re-checking**: a later session in this same conversation kept reporting the loop
+    as broken for hours after it was fixed, from one stale timestamp plus reading `skipped` and
+    `cancelled` runs as failures. `skipped` is BY DESIGN on non-plan PRs and `cancelled` is the
+    concurrency group — `PLAN_REVIEW_PROTOCOL.md` §5 says so explicitly. Re-read the secret's
+    `updated_at` and look for `success` before ever calling that lane down.
+  - **`claude.yml` re-requests review through a connected identity now** (dashboard PR #318,
+    merged `4574170`). Once folding worked, every autonomous fold still ended with a self-written
+    `@codex review` that Codex bounced ("create a Codex account and connect to github" — bot
+    mentions always are, §5), so the owner re-posted by hand three times on PR #316. `claude.yml`
+    now snapshots the PR head, forbids Claude from writing the mention, and re-requests via
+    `CODEX_REVIEW_PAT` **only when the head actually moved**. Head unchanged is exactly the
+    escalate / no-clear-verdict / circuit-breaker paths, and a closed PR is the approved-and-merged
+    path — all explicit no-ops. Also corrected `plan-review-request.yml`, which still told Codex
+    the pre-#306 rule that a finding-free review means approved.
+  - **`openclaw` PR #112 merged** (`07c55fa`): 45 dead `/root/projects/openclaw*` references fixed
+    across 9 files — the real checkout is `/root/AgentGlob_Apps/`. Added the `Active Branches / PRs`
+    table `MULTI_AGENT_PROTOCOL.md` §2 tells agents to use but that never existed.
 - **Validation**: PR #306: `npx tsc --noEmit` clean on every Rev; `claude.yml` re-validated as
   parseable YAML after every edit; grepped for leftover "EQUALS" after the Rev 5 fix to confirm
   none remained; `terminology` CI check passing pre-merge. Doc-only change, no source touched, so
   build/tests are unaffected.
-- **Follow-ups**: **owner must rotate `CLAUDE_CODE_OAUTH_TOKEN`** (repo secret + server
-  `~/.bashrc`) before either the GitHub Action or the manual DevAgents fallback can run again —
-  until then every plan-review round on every PR is fully manual; merge `openclaw` #112; PR #284
-  (`plan: AgentGlob MCP`) is a separate session's branch, sitting at its own round-4 circuit-breaker
-  bound as of 2026-08-08, unrelated to this work and not touched here.
+- **Follow-ups**: the automated lane is **live** — `claude[bot]` folded Rev 3 and Rev 4 on PR #316
+  unattended and tripped its own round-4 circuit-breaker correctly. PR #318's re-request step is
+  **unproven**: §6 forbids exercising a workflow from a branch, so the real test is the next plan
+  PR — if Codex reviews a fold without the owner re-posting, it works. Remaining: this server's
+  `~/.bashrc` line 100 still holds a 92-byte non-token value (manual DevAgents fallback only,
+  nothing depends on it, but treat that value as burned — it was pasted into a session transcript
+  while being diagnosed); a stale `.next/types` cache dated 2026-07-24 in the dashboard checkout
+  fails `tsc` on files absent from current branches, so clear it before trusting a red typecheck;
+  PR #284 (`plan: AgentGlob MCP`) is a separate session's branch at its own round-4 bound as of
+  2026-08-08, untouched here.
 
 ## Last Session (prev)
 
