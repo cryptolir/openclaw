@@ -50,36 +50,45 @@ cd "$REPO" || { echo "FATAL: $REPO not found"; exit 1; }
 echo "═══════════════════════════════════════════════════════════════"
 echo "diagnostic-cron run @ $(date '+%Y-%m-%d %H:%M:%S %Z')"
 
-# 1. Sync this repo (scripts), then the dashboard repo (bug_list.md). Reset the
-#    bug_list first so `git pull` never collides with the last run's
-#    uncommitted AUTOSCAN write. Only touch the dashboard checkout on main —
-#    never yank someone's feature branch out from under them.
-# Only pull when this shared checkout is actually on main — the same rule the
-# dashboard checkout below already follows, and for a stronger reason: a
-# `--rebase` here does not merely fail, it REWRITES whoever's branch is checked
-# out and can strand the repo mid-rebase. That happened 2026-08-11: the 06:00 run
-# found a local feature branch, rebased it onto main, hit a STATUS.md conflict and
-# left an unmerged tree that every later `git pull` refused with "needs merge",
-# for ~9h, while this WARN kept the run looking successful (OB-32).
-_repo_branch="$(git branch --show-current 2>/dev/null)"
-if [[ "$_repo_branch" == "main" ]]; then
-  git pull -q --rebase --autostash origin main || echo "WARN: git pull failed; continuing with local tree"
-elif [[ -z "$_repo_branch" ]] || [[ -d .git/rebase-merge ]] || [[ -d .git/rebase-apply ]]; then
-  # Detached or mid-rebase = already wedged. Say so loudly; the scripts below
-  # still run, but they are running from an unknown tree.
-  echo "ERROR: $REPO is detached or mid-rebase — running from a WEDGED checkout."
-  echo "       Fix: cd $REPO && git rebase --abort && git checkout main"
-else
-  echo "WARN: $REPO is on '$_repo_branch', not main — skipping pull so this cron"
-  echo "      cannot rewrite that branch. Scripts run from the local tree."
-fi
-
+# 1. Check our own checkout (read-only — see below), then sync the dashboard
+#    repo that holds bug_list.md. Neither of the two checkouts a human might be
+#    working in is ever written to or branch-switched; each side gets its own
+#    cron-owned worktree instead.
 # Every WARN that means "today's findings will not reach anyone" goes in here and
 # is reprinted in the EMAIL (step 5) and the SUBJECT. A warning that only ever
 # reaches /var/log is a warning nobody reads — that is the whole reason 53 runs
 # went by unnoticed.
 SYNC_WARNINGS=""
 warn_sync() { echo "WARN: $1"; SYNC_WARNINGS="${SYNC_WARNINGS}⚠ $1"$'\n'; }
+
+# This cron does not update its own checkout, and must never pull it. $REPO is
+# meant to be .openclaw-autoscan — a detached worktree owned by cron alone,
+# re-pinned to origin/main by its own crontab line at 05:40, while nothing is
+# executing from it (rewriting a script under a running bash is its own bug).
+#
+# It used to run from the SHARED human checkout and `git pull --rebase` it. That
+# does not merely fail when someone has a branch checked out — it REWRITES that
+# branch. 2026-08-11: the 06:00 run rebased a local feature branch onto main, hit
+# a STATUS.md conflict, and left the repo detached mid-rebase; every later `git
+# pull` there refused with "needs merge" for ~9h while a `|| echo WARN` kept the
+# run reporting success. The dashboard checkout below has had a dedicated
+# worktree since the 53-skip incident; the checkout the cron RUNS FROM did not.
+#
+# So: read-only. Fetch to learn where main is, then say — in the EMAIL, not just
+# /var/log — if what we are about to execute is not it. A worktree whose pin
+# quietly stopped running would otherwise re-run yesterday's scripts forever.
+git fetch -q origin main 2>/dev/null \
+  || warn_sync "$REPO: git fetch failed — cannot tell whether these scripts are current"
+_head="$(git rev-parse HEAD 2>/dev/null || true)"
+_main="$(git rev-parse origin/main 2>/dev/null || true)"
+# `git rev-parse --git-path`, not a literal .git/… — in a worktree `.git` is a
+# FILE and the rebase state lives under .git/worktrees/<name>/, so a hardcoded
+# path can never be true in the one checkout this check exists to protect.
+if [[ -d "$(git rev-parse --git-path rebase-merge)" || -d "$(git rev-parse --git-path rebase-apply)" ]]; then
+  warn_sync "$REPO is MID-REBASE — every script below is running from a half-merged tree. Fix: cd $REPO && git rebase --abort"
+elif [[ -n "$_head" && -n "$_main" && "$_head" != "$_main" ]]; then
+  warn_sync "$REPO is not at origin/main ($(git rev-parse --short HEAD) vs $(git rev-parse --short origin/main)) — these scripts may be stale. Expected \$REPO=/root/AgentGlob_Apps/.openclaw-autoscan, re-pinned by the 05:40 crontab line."
+fi
 
 if ! git -C "$DASH_SHARED" rev-parse --git-dir >/dev/null 2>&1; then
   warn_sync "$DASH_SHARED is not a git checkout — bug_list write/sync will fail"
