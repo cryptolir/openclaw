@@ -54,7 +54,25 @@ echo "diagnostic-cron run @ $(date '+%Y-%m-%d %H:%M:%S %Z')"
 #    bug_list first so `git pull` never collides with the last run's
 #    uncommitted AUTOSCAN write. Only touch the dashboard checkout on main —
 #    never yank someone's feature branch out from under them.
-git pull -q --rebase --autostash origin main || echo "WARN: git pull failed; continuing with local tree"
+# Only pull when this shared checkout is actually on main — the same rule the
+# dashboard checkout below already follows, and for a stronger reason: a
+# `--rebase` here does not merely fail, it REWRITES whoever's branch is checked
+# out and can strand the repo mid-rebase. That happened 2026-08-11: the 06:00 run
+# found a local feature branch, rebased it onto main, hit a STATUS.md conflict and
+# left an unmerged tree that every later `git pull` refused with "needs merge",
+# for ~9h, while this WARN kept the run looking successful (OB-32).
+_repo_branch="$(git branch --show-current 2>/dev/null)"
+if [[ "$_repo_branch" == "main" ]]; then
+  git pull -q --rebase --autostash origin main || echo "WARN: git pull failed; continuing with local tree"
+elif [[ -z "$_repo_branch" ]] || [[ -d .git/rebase-merge ]] || [[ -d .git/rebase-apply ]]; then
+  # Detached or mid-rebase = already wedged. Say so loudly; the scripts below
+  # still run, but they are running from an unknown tree.
+  echo "ERROR: $REPO is detached or mid-rebase — running from a WEDGED checkout."
+  echo "       Fix: cd $REPO && git rebase --abort && git checkout main"
+else
+  echo "WARN: $REPO is on '$_repo_branch', not main — skipping pull so this cron"
+  echo "      cannot rewrite that branch. Scripts run from the local tree."
+fi
 
 # Every WARN that means "today's findings will not reach anyone" goes in here and
 # is reprinted in the EMAIL (step 5) and the SUBJECT. A warning that only ever
