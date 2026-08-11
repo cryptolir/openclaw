@@ -50,6 +50,22 @@ if git -C "$DASH_REPO" rev-parse --git-dir >/dev/null 2>&1; then
   # t.me is the same Telegram dep as the documented api.telegram.org.
   ALLOW='w3\.org|schema\.org|json-schema\.org|example\.com|localhost|127\.0\.0\.1|0\.0\.0\.0|github\.com/[^ ]*/blob|(^|\.)t\.me$'
 
+  # TEST FILES ARE EXCLUDED from both scans below (`:!*.test.ts`). A hostname or
+  # env var that appears only in a test is not a production dependency, and
+  # reporting one is worse than silence: it asks a human to write a false row
+  # into DEPENDENCIES.md. Measured — this scan flagged `evil.example` (a
+  # hostile-origin fixture in app-key-auth/runtime-auth tests) and
+  # `example.test` (a fake NEXTAUTH_URL in gcal-core tests) every single day.
+  # Both are RFC 2606 reserved test TLDs, so they can never become real deps.
+  #
+  # ⚠️ Known blind spot, unchanged by this fix: the env-var regex matches
+  # `process.env.NAME` but not `process.env[CONST]`. `lib/secret-crypto.ts`
+  # reads OPENCLAW_SECRETS_ENCRYPTION_KEY the second way, so this scan never saw
+  # the production reference — it flagged that key only because a test file
+  # assigned it with dot notation. Excluding tests therefore makes this scan go
+  # quiet about it; it is documented by hand in DEPENDENCIES.md instead, and the
+  # doc's maintenance footer says so.
+  #
   # External hosts. Match on the base domain (last two labels) so the doc's
   # shorthand (`{eth,arb,base}-mainnet.g.alchemy.com`) still counts as covered.
   # ponytail: base-domain match can under-report a new subdomain of a known
@@ -64,7 +80,7 @@ if git -C "$DASH_REPO" rev-parse --git-dir >/dev/null 2>&1; then
     iss "ISSUE|P3|deps|-|Undocumented dependency candidate|host ${host} in lib/app — suggested fix: add a row to docs/DEPENDENCIES.md"
     new_count=$((new_count+1))
   done <<EOF
-$(git -C "$DASH_REPO" grep -IhoE 'https?://[a-zA-Z0-9._/-]+' origin/main -- lib app/api 2>/dev/null \
+$(git -C "$DASH_REPO" grep -IhoE 'https?://[a-zA-Z0-9._/-]+' origin/main -- lib app/api ':!*.test.ts' 2>/dev/null \
   | sed -E 's#https?://([^/"'"'"' )]+).*#\1#' | sort -u)
 EOF
 
@@ -82,7 +98,7 @@ EOF
     iss "ISSUE|P3|deps|-|Undocumented env var candidate|${ev} in lib/app — suggested fix: add a row to docs/DEPENDENCIES.md"
     new_count=$((new_count+1))
   done <<EOF
-$(git -C "$DASH_REPO" grep -IhoE 'process\.env\.[A-Z_0-9]+' origin/main -- lib app/api 2>/dev/null \
+$(git -C "$DASH_REPO" grep -IhoE 'process\.env\.[A-Z_0-9]+' origin/main -- lib app/api ':!*.test.ts' 2>/dev/null \
   | sed 's/process\.env\.//' | grep -E '_(URL|KEY|HOST|SECRET|TOKEN|BUCKET)$' | sort -u)
 EOF
 else
