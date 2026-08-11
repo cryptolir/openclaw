@@ -125,6 +125,8 @@ No direct pushes to `main`.
 | Dashboard         | `/root/AgentGlob_Apps/openclaw-dashboard` | `/Users/liranperetz/openclaw-dashboard` | `cryptolir/openclaw-dashboard` | Next.js admin dashboard            |
 | Coordination docs | `/root/AgentGlob_Apps/openclaw`           | `/Users/liranperetz/clawdbot-worker`    | —                              | `STATUS.md`, protocols, task brief |
 
+**All work on DevAgents lives under `/root/AgentGlob_Apps/`** — new clones, `git worktree add`, everything. Don't create checkouts under `~/worktrees`, `~/projects`, or any other sibling directory; this table is the only set of valid paths. (PR #112 already cleaned up one round of scattered `/root/projects/openclaw*` checkouts — don't start a new one.)
+
 Routine development, builds, git operations, and deployments happen on **DevAgents** unless the user explicitly asks to work from the local Mac.
 
 ---
