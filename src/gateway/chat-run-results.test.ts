@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   LIVE_STALE_MS,
   MAX_ENTRIES,
+  MAX_ERROR_BYTES,
+  MAX_LIVE_ENTRIES,
   MAX_RESULT_BYTES,
   MAX_TOTAL_BYTES,
   RESULT_TTL_MS,
@@ -113,7 +115,11 @@ describe("chat.result — bounds enforced on insert (T10/C14)", () => {
     // Truncation must be surfaced, not silent.
     expect(got.truncated).toBe(true);
     expect(Buffer.byteLength(got.text ?? "", "utf8")).toBeLessThanOrEqual(MAX_RESULT_BYTES);
-    expect(store.stats().totalBytes).toBeLessThanOrEqual(MAX_RESULT_BYTES);
+    // totalBytes also carries the sessionKey and the runId (round 1, finding 3),
+    // so the ceiling for one entry is the text cap plus those identifiers.
+    expect(store.stats().totalBytes).toBeLessThanOrEqual(
+      MAX_RESULT_BYTES + Buffer.byteLength("s", "utf8") + Buffer.byteLength("big", "utf8"),
+    );
   });
 
   it("C14: the TOTAL byte ceiling holds even below the entry cap", () => {
@@ -190,5 +196,69 @@ describe("chat.result — drop", () => {
     expect(store.lookup("a", "s")).toEqual({ state: "unknown" });
     expect(store.lookup("b", "s")).toEqual({ state: "unknown" });
     expect(store.stats().totalBytes).toBe(0);
+  });
+});
+
+describe("chat.result — every retained string is accounted (round 1, finding 3)", () => {
+  it("the error message, sessionKey and runId all count toward the ceiling", () => {
+    // The first draft counted only the reply text, so a hundred entries with
+    // large errors or large ids could blow past MAX_TOTAL_BYTES while
+    // totalBytes stayed small — the bound was advisory, not real.
+    const { store } = clockStore();
+    const plain = clockStore();
+
+    store.finish("r".repeat(500), {
+      sessionKey: "s".repeat(500),
+      state: "error",
+      text: "",
+      errorMessage: "e".repeat(500),
+    });
+    plain.store.finish("r", { sessionKey: "s", state: "error", text: "", errorMessage: "e" });
+
+    expect(store.stats().totalBytes).toBeGreaterThan(plain.store.stats().totalBytes + 1000);
+  });
+
+  it("an oversized error message is truncated, not retained whole", () => {
+    const { store } = clockStore();
+    store.finish("r", {
+      sessionKey: "s",
+      state: "error",
+      text: "",
+      errorMessage: "x".repeat(MAX_ERROR_BYTES * 4),
+    });
+    const got = store.lookup("r", "s");
+    expect(Buffer.byteLength(got.errorMessage ?? "", "utf8")).toBeLessThanOrEqual(MAX_ERROR_BYTES);
+  });
+});
+
+describe("chat.result — live entries are pruned, not just hidden (round 1, finding 4)", () => {
+  it("a stale live entry is DELETED on lookup", () => {
+    // Hiding it behind a staleness check still leaked the runId and sessionKey
+    // for the gateway's lifetime — in exactly the missed-cleanup case the check
+    // was added for.
+    const { store, tick } = clockStore();
+    store.markLive("r", "s");
+    expect(store.stats().live).toBe(1);
+
+    tick(LIVE_STALE_MS + 1);
+    expect(store.lookup("r", "s").state).toBe("unknown");
+    expect(store.stats().live).toBe(0);
+  });
+
+  it("the live map is capped even when nothing is ever cleaned up", () => {
+    const { store } = clockStore();
+    for (let i = 0; i < MAX_LIVE_ENTRIES + 250; i++) {
+      store.markLive(`run-${i}`, "s");
+    }
+    expect(store.stats().live).toBeLessThanOrEqual(MAX_LIVE_ENTRIES);
+  });
+
+  it("capping evicts the oldest and keeps the newest run alive", () => {
+    const { store } = clockStore();
+    for (let i = 0; i < MAX_LIVE_ENTRIES + 10; i++) {
+      store.markLive(`run-${i}`, "s");
+    }
+    expect(store.lookup("run-0", "s").state).toBe("unknown");
+    expect(store.lookup(`run-${MAX_LIVE_ENTRIES + 9}`, "s").state).toBe("running");
   });
 });

@@ -29,6 +29,23 @@ export const MAX_ENTRIES = 100;
 /** How long a finished result stays collectable. Cleanup, not the guarantee. */
 export const RESULT_TTL_MS = 15 * 60 * 1000;
 /**
+ * Longest retained error message.
+ *
+ * A propagated error is caller-influenced and otherwise unbounded, and it was
+ * NOT counted toward the ceiling in the first draft — so a hundred large errors
+ * could blow past `MAX_TOTAL_BYTES` while `totalBytes` stayed small.
+ */
+export const MAX_ERROR_BYTES = 4 * 1024;
+/**
+ * Ceiling on runs tracked as live.
+ *
+ * The staleness check alone only *hides* an entry whose cleanup was missed; it
+ * never removed one, so the live map grew for the lifetime of the gateway in
+ * exactly the scenario the check exists for. Entries are pruned on access and
+ * capped here.
+ */
+export const MAX_LIVE_ENTRIES = 500;
+/**
  * How long a run may go without a delta before liveness stops being believed.
  *
  * A safety net, not a timeout: if a cleanup path is ever missed, a stale live
@@ -105,6 +122,23 @@ export function createChatResultStore(opts: { now?: () => number } = {}) {
     }
   };
 
+  /** Drop live entries nobody has cleaned up. Bounded growth, not just bounded answers. */
+  const pruneLive = () => {
+    const t = now();
+    for (const [runId, entry] of live) {
+      if (t - entry.at > LIVE_STALE_MS) {
+        live.delete(runId);
+      }
+    }
+    // Still over after pruning by age: evict oldest-first (Map keeps insertion order).
+    for (const runId of live.keys()) {
+      if (live.size <= MAX_LIVE_ENTRIES) {
+        break;
+      }
+      live.delete(runId);
+    }
+  };
+
   /** Enforce every bound at insert time. A sweep that never runs guarantees nothing. */
   const enforceBounds = () => {
     for (const [runId, entry] of finished) {
@@ -120,6 +154,9 @@ export function createChatResultStore(opts: { now?: () => number } = {}) {
     /** A run produced output. Called on every delta; cheap and idempotent. */
     markLive(runId: string, sessionKey: string): void {
       live.set(runId, { sessionKey, at: now() });
+      if (live.size > MAX_LIVE_ENTRIES) {
+        pruneLive();
+      }
     },
 
     /**
@@ -137,12 +174,20 @@ export function createChatResultStore(opts: { now?: () => number } = {}) {
       forget(runId);
       const full = entry.text ?? "";
       const kept = truncateToBytes(full, MAX_RESULT_BYTES);
-      const bytes = byteLength(kept);
+      const err =
+        entry.errorMessage === undefined
+          ? undefined
+          : truncateToBytes(entry.errorMessage, MAX_ERROR_BYTES);
+      // Count EVERY string held by this entry, not just the reply: the error,
+      // the session key and the runId (the map key) are all retained, and all
+      // are caller-influenced.
+      const bytes =
+        byteLength(kept) + byteLength(err ?? "") + byteLength(entry.sessionKey) + byteLength(runId);
       finished.set(runId, {
         sessionKey: entry.sessionKey,
         state: entry.state,
         text: kept,
-        errorMessage: entry.errorMessage,
+        errorMessage: err,
         truncated: kept.length !== full.length,
         bytes,
         at: now(),
@@ -184,8 +229,14 @@ export function createChatResultStore(opts: { now?: () => number } = {}) {
       }
 
       const active = live.get(runId);
-      if (active && active.sessionKey === sessionKey && t - active.at <= LIVE_STALE_MS) {
-        return { state: "running" };
+      if (active) {
+        if (t - active.at > LIVE_STALE_MS) {
+          // Delete, do not merely hide: a missed cleanup would otherwise keep
+          // this runId and sessionKey for the gateway's lifetime.
+          live.delete(runId);
+        } else if (active.sessionKey === sessionKey) {
+          return { state: "running" };
+        }
       }
 
       return { state: "unknown" };
