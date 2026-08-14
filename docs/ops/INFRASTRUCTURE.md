@@ -153,6 +153,13 @@ management".
 - `oc:ops/graphiti-life/` — Graphiti per-user memory deploy + runbook. _(deployed; see §8)_
 - `dash:docs/peruser-user-file-plan.md` / `dash:docs/peruser-user-file-asbuilt.md` — Havaya per-user user-file API.
 
+**App-key auth (self-serve)**
+
+- `dash:docs/plans/app-key-self-serve.md` — self-serve App keys from the agent App
+  tab; chat-only, Org-owner-minted. _(see §8.2)_
+- `dash:docs/ops/app-key-split-runbook.md` — owner-only runbook to split Havaya and
+  Plusim off the shared legacy key.
+
 **Skills & platform**
 
 - `oc:docs/plans/canonical-skill-registry.md` — canonical skill registry.
@@ -313,6 +320,16 @@ dashboard ──ws/token──► life gateway (US host)
 - **Not synced with the dashboard UI:** Havaya does not use dashboard threads/voice;
   it owns its UX and persists its own transcripts (the public chat API has no
   history-fetch).
+- **App-key auth, today vs. self-serve (dashboard #336, fixed #338):** the
+  `Bearer AGENTGLOB_APP_API_KEY` in the diagram above is the single key Havaya and
+  Plusim currently **share**. A self-serve alternative now exists (agent → App tab →
+  App keys, Org owner only) but is **chat-only** — it does not cover `/user-file` or
+  `/user-file/raw`, because a user-file request carries no app namespace to bind a
+  stored key against (two apps holding keys on one agent could read each other's
+  users' files). Havaya's `/user-file` call above must stay on the operator-configured
+  key regardless of whether Havaya also holds a self-serve one. Splitting Havaya and
+  Plusim onto their own **operator** keys (still required for user-file) is the
+  owner-only runbook indexed in §3, not something the self-serve UI performs.
 - **Havaya marketing site** (`cryptolir/Havaya.me`) is a separate static Next.js site on
   the same Coolify host — no AgentGlob API usage; deploys per §4 (git push → Coolify).
 
