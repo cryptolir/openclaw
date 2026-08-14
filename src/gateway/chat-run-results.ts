@@ -46,6 +46,15 @@ export const MAX_ERROR_BYTES = 4 * 1024;
  */
 export const MAX_LIVE_ENTRIES = 500;
 /**
+ * Hard ceiling on bytes held by the live map.
+ *
+ * The entry cap alone is not a memory bound — the same mistake the finished map
+ * had. Both strings kept here are caller-controlled and unbounded by the schema
+ * (`NonEmptyString` sets no maximum, and the gateway accepts frames up to
+ * 25 MiB), so 500 entries can still be gigabytes. Bytes are the real guarantee.
+ */
+export const MAX_LIVE_BYTES = 256 * 1024;
+/**
  * How long a run may go without a delta before liveness stops being believed.
  *
  * A safety net, not a timeout: if a cleanup path is ever missed, a stale live
@@ -109,7 +118,8 @@ export type ChatResultStore = ReturnType<typeof createChatResultStore>;
 export function createChatResultStore(opts: { now?: () => number } = {}) {
   const now = opts.now ?? Date.now;
   /** Runs currently producing output: runId → its session and last-seen time. */
-  const live = new Map<string, { sessionKey: string; at: number }>();
+  const live = new Map<string, { sessionKey: string; at: number; bytes: number }>();
+  let liveBytes = 0;
   /** Finished runs, insertion-ordered (Map preserves it) so eviction is oldest-first. */
   const finished = new Map<string, FinishedRun>();
   let totalBytes = 0;
@@ -122,19 +132,29 @@ export function createChatResultStore(opts: { now?: () => number } = {}) {
     }
   };
 
+  const forgetLive = (runId: string) => {
+    const prev = live.get(runId);
+    if (prev) {
+      liveBytes -= prev.bytes;
+      live.delete(runId);
+    }
+  };
+
   /** Drop live entries nobody has cleaned up. Bounded growth, not just bounded answers. */
   const pruneLive = () => {
     const t = now();
     for (const [runId, entry] of live) {
       if (t - entry.at > LIVE_STALE_MS) {
+        liveBytes -= entry.bytes;
         live.delete(runId);
       }
     }
     // Still over after pruning by age: evict oldest-first (Map keeps insertion order).
-    for (const runId of live.keys()) {
-      if (live.size <= MAX_LIVE_ENTRIES) {
+    for (const [runId, entry] of live) {
+      if (live.size <= MAX_LIVE_ENTRIES && liveBytes <= MAX_LIVE_BYTES) {
         break;
       }
+      liveBytes -= entry.bytes;
       live.delete(runId);
     }
   };
@@ -153,8 +173,18 @@ export function createChatResultStore(opts: { now?: () => number } = {}) {
   return {
     /** A run produced output. Called on every delta; cheap and idempotent. */
     markLive(runId: string, sessionKey: string): void {
-      live.set(runId, { sessionKey, at: now() });
-      if (live.size > MAX_LIVE_ENTRIES) {
+      // ⚠️ A run producing output SUPERSEDES any result retained under the same
+      // id. chat.send's dedupe TTL (5 min) is shorter than RESULT_TTL_MS
+      // (15 min), so an idempotency key can legitimately start a second run
+      // while the first result is still retained — and `lookup` checks
+      // `finished` before `live`, so without this the caller is handed the
+      // PREVIOUS answer and stops before the new one arrives.
+      forget(runId);
+      forgetLive(runId);
+      const bytes = byteLength(runId) + byteLength(sessionKey);
+      live.set(runId, { sessionKey, at: now(), bytes });
+      liveBytes += bytes;
+      if (live.size > MAX_LIVE_ENTRIES || liveBytes > MAX_LIVE_BYTES) {
         pruneLive();
       }
     },
@@ -170,7 +200,7 @@ export function createChatResultStore(opts: { now?: () => number } = {}) {
       runId: string,
       entry: { sessionKey: string; state: "final" | "error"; text: string; errorMessage?: string },
     ): void {
-      live.delete(runId);
+      forgetLive(runId);
       forget(runId);
       const full = entry.text ?? "";
       const kept = truncateToBytes(full, MAX_RESULT_BYTES);
@@ -198,7 +228,7 @@ export function createChatResultStore(opts: { now?: () => number } = {}) {
 
     /** Forget a run entirely — abort, or maintenance cleanup. */
     drop(runId: string): void {
-      live.delete(runId);
+      forgetLive(runId);
       forget(runId);
     },
 
@@ -233,7 +263,7 @@ export function createChatResultStore(opts: { now?: () => number } = {}) {
         if (t - active.at > LIVE_STALE_MS) {
           // Delete, do not merely hide: a missed cleanup would otherwise keep
           // this runId and sessionKey for the gateway's lifetime.
-          live.delete(runId);
+          forgetLive(runId);
         } else if (active.sessionKey === sessionKey) {
           return { state: "running" };
         }
@@ -244,12 +274,13 @@ export function createChatResultStore(opts: { now?: () => number } = {}) {
 
     /** Test/diagnostic surface only. */
     stats() {
-      return { live: live.size, finished: finished.size, totalBytes };
+      return { live: live.size, finished: finished.size, totalBytes, liveBytes };
     },
     clear() {
       live.clear();
       finished.clear();
       totalBytes = 0;
+      liveBytes = 0;
     },
   };
 }

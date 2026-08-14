@@ -3,6 +3,7 @@ import {
   LIVE_STALE_MS,
   MAX_ENTRIES,
   MAX_ERROR_BYTES,
+  MAX_LIVE_BYTES,
   MAX_LIVE_ENTRIES,
   MAX_RESULT_BYTES,
   MAX_TOTAL_BYTES,
@@ -260,5 +261,48 @@ describe("chat.result — live entries are pruned, not just hidden (round 1, fin
     }
     expect(store.lookup("run-0", "s").state).toBe("unknown");
     expect(store.lookup(`run-${MAX_LIVE_ENTRIES + 9}`, "s").state).toBe("running");
+  });
+});
+
+describe("chat.result — a restarted runId (round 2, finding 2)", () => {
+  it("a new run supersedes the retained result for the same id", () => {
+    // chat.send's dedupe TTL (5 min) is SHORTER than RESULT_TTL_MS (15 min), so
+    // a reused idempotency key can start a second run while the first result is
+    // still retained. lookup checks `finished` before `live`, so without
+    // invalidation the caller is handed the PREVIOUS answer and stops.
+    const { store } = clockStore();
+    store.finish("same-id", { sessionKey: "s", state: "final", text: "OLD ANSWER" });
+    expect(store.lookup("same-id", "s").text).toBe("OLD ANSWER");
+
+    store.markLive("same-id", "s");
+    expect(store.lookup("same-id", "s")).toEqual({ state: "running" });
+
+    store.finish("same-id", { sessionKey: "s", state: "final", text: "NEW ANSWER" });
+    expect(store.lookup("same-id", "s").text).toBe("NEW ANSWER");
+  });
+});
+
+describe("chat.result — the live map is bounded by BYTES (round 2, finding 1)", () => {
+  it("large caller-controlled identifiers cannot blow the ceiling", () => {
+    // The entry cap alone is not a memory bound: runId and sessionKey are
+    // caller-controlled and the schema sets no maximum length.
+    const { store } = clockStore();
+    const bigRun = "x".repeat(20_000);
+    const bigSession = "s".repeat(20_000);
+    for (let i = 0; i < 50; i++) {
+      store.markLive(bigRun + String(i), bigSession);
+    }
+    expect(store.stats().liveBytes).toBeLessThanOrEqual(MAX_LIVE_BYTES);
+    expect(store.stats().live).toBeLessThanOrEqual(MAX_LIVE_ENTRIES);
+  });
+
+  it("live byte accounting is released on finish and drop", () => {
+    const { store } = clockStore();
+    store.markLive("a", "s");
+    store.markLive("b", "s");
+    store.finish("a", { sessionKey: "s", state: "final", text: "x" });
+    store.drop("b");
+    expect(store.stats().liveBytes).toBe(0);
+    expect(store.stats().live).toBe(0);
   });
 });
