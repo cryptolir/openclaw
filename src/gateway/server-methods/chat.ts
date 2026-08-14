@@ -28,6 +28,7 @@ import {
   errorShape,
   formatValidationErrors,
   validateChatAbortParams,
+  validateChatResultParams,
   validateChatHistoryParams,
   validateChatInjectParams,
   validateChatSendParams,
@@ -662,6 +663,34 @@ export const chatHandlers: GatewayRequestHandlers = {
       thinkingLevel,
       verboseLevel,
     });
+  },
+  /**
+   * Collect a finished run by id.
+   *
+   * A web-chat turn can outlive the browser's request; the gateway finishes it
+   * regardless and retains the result briefly, so the page can come back for it
+   * instead of being told the message failed.
+   *
+   * ⚠️ `sessionKey` is the authorization, not `runId`. A runId is
+   * `Math.random()`-derived on the dashboard side and guessable. Every miss —
+   * no such run, wrong session, expired — returns the same `unknown`, so this
+   * cannot be used to probe which runs exist. All of that lives in
+   * `chat-run-results.ts`, which is tested; this only relays it.
+   */
+  "chat.result": ({ params, respond, context }) => {
+    if (!validateChatResultParams(params)) {
+      respond(
+        false,
+        undefined,
+        errorShape(
+          ErrorCodes.INVALID_REQUEST,
+          `invalid chat.result params: ${formatValidationErrors(validateChatResultParams.errors)}`,
+        ),
+      );
+      return;
+    }
+    const { sessionKey, runId } = params as { sessionKey: string; runId: string };
+    respond(true, context.chatRunResults.lookup(runId, sessionKey));
   },
   "chat.abort": ({ params, respond, context }) => {
     if (!validateChatAbortParams(params)) {
