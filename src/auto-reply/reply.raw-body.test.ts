@@ -30,6 +30,7 @@ vi.mock("../web/session.js", () => ({
 }));
 
 import { getReplyFromConfig } from "./reply.js";
+import { stripPersonaIcon } from "./reply/persona.js";
 
 const { withTempHome } = createTempHomeHarness({ prefix: "openclaw-rawbody-" });
 
@@ -78,7 +79,8 @@ describe("RawBody directive parsing", () => {
       );
 
       const text = Array.isArray(res) ? res[0]?.text : res?.text;
-      expect(text).toBe("ok");
+      // Persona icon stripped: this test is about directive parsing, not personas.
+      expect(stripPersonaIcon(text ?? "")).toBe("ok");
       expect(agentMocks.runEmbeddedPiAgent).toHaveBeenCalledOnce();
       const prompt =
         (agentMocks.runEmbeddedPiAgent.mock.calls[0]?.[0] as { prompt?: string } | undefined)

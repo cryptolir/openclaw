@@ -143,6 +143,18 @@ export function resolvePersonaIcon(params: {
   return PERSONA_ICONS[persona];
 }
 
+/**
+ * Remove a leading persona icon, if present.
+ *
+ * The inverse of {@link applyPersonaPrefix}. Callers that care about the reply
+ * TEXT rather than which persona was chosen use this, so they do not have to
+ * hardcode an icon — which the keyword heuristic can change for unrelated
+ * reasons (`hasKeyword` is a substring match: "eth" hits "whether").
+ */
+export function stripPersonaIcon(text: string): string {
+  return text.replace(ICON_PREFIX_RE, "");
+}
+
 export function applyPersonaPrefix(payloads: ReplyPayload[], icon: string): ReplyPayload[] {
   return payloads.map((payload) => {
     if (typeof payload.text !== "string") {

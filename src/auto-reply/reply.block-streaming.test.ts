@@ -6,6 +6,9 @@ import type { OpenClawConfig } from "../config/config.js";
 import { withTempHome as withTempHomeHarness } from "../config/home-env.test-harness.js";
 import { getReplyFromConfig } from "./reply.js";
 
+/** runReplyAgent prefixes every reply with a persona icon (see reply/persona.ts). */
+const PERSONA_PREFIX = "\u{1F916}\u{1F4AC} ";
+
 type RunEmbeddedPiAgent = typeof import("../agents/pi-embedded.js").runEmbeddedPiAgent;
 type RunEmbeddedPiAgentParams = Parameters<RunEmbeddedPiAgent>[0];
 type RunEmbeddedPiAgentReply = Awaited<ReturnType<RunEmbeddedPiAgent>>;
@@ -157,7 +160,7 @@ describe("block streaming", () => {
       });
 
       const streamPayload = Array.isArray(resStreamMode) ? resStreamMode[0] : resStreamMode;
-      expect(streamPayload?.text).toBe("final");
+      expect(streamPayload?.text).toBe(`${PERSONA_PREFIX}final`);
       expect(onBlockReplyStreamMode).not.toHaveBeenCalled();
     });
   });
