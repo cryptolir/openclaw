@@ -68,6 +68,10 @@ vi.mock("./queue.js", async () => {
 
 import { runReplyAgent } from "./agent-runner.js";
 
+/** runReplyAgent prefixes every reply with a persona icon (see reply/persona.ts).
+ *  These tests assert delivery behaviour, not the icon, but the icon is on the wire. */
+const PERSONA_PREFIX = "\u{1F916}\u{1F4AC} ";
+
 type RunWithModelFallbackParams = {
   provider: string;
   model: string;
@@ -198,7 +202,7 @@ describe("runReplyAgent onAgentRunStart", () => {
 
     expect(onAgentRunStart).toHaveBeenCalledTimes(1);
     expect(onAgentRunStart).toHaveBeenCalledWith("run-started");
-    expect(result).toMatchObject({ text: "ok" });
+    expect(result).toMatchObject({ text: `${PERSONA_PREFIX}ok` });
   });
 });
 
@@ -687,7 +691,7 @@ describe("runReplyAgent block streaming", () => {
     const result = await resultPromise;
 
     expect(sawAbort).toBe(true);
-    expect(result).toMatchObject({ text: "Final message" });
+    expect(result).toMatchObject({ text: `${PERSONA_PREFIX}Final message` });
   });
 });
 
@@ -782,7 +786,7 @@ describe("runReplyAgent claude-cli routing", () => {
     expect(runCliAgentMock).toHaveBeenCalledTimes(1);
     expect(runEmbeddedPiAgentMock).not.toHaveBeenCalled();
     expect(lifecyclePhases).toEqual(["start", "end"]);
-    expect(result).toMatchObject({ text: "ok" });
+    expect(result).toMatchObject({ text: `${PERSONA_PREFIX}ok` });
   });
 });
 
@@ -873,7 +877,7 @@ describe("runReplyAgent messaging tool suppression", () => {
 
     const result = await createRun("slack");
 
-    expect(result).toMatchObject({ text: "hello world!" });
+    expect(result).toMatchObject({ text: `${PERSONA_PREFIX}hello world!` });
   });
 
   it("delivers replies when account ids do not match", async () => {
@@ -893,7 +897,7 @@ describe("runReplyAgent messaging tool suppression", () => {
 
     const result = await createRun("slack");
 
-    expect(result).toMatchObject({ text: "hello world!" });
+    expect(result).toMatchObject({ text: `${PERSONA_PREFIX}hello world!` });
   });
 
   it("persists usage fields even when replies are suppressed", async () => {
@@ -1031,7 +1035,7 @@ describe("runReplyAgent reminder commitment guard", () => {
 
     const result = await createRun();
     expect(result).toMatchObject({
-      text: "I'll remind you tomorrow morning.\n\nNote: I did not schedule a reminder in this turn, so this will not trigger automatically.",
+      text: `${PERSONA_PREFIX}I'll remind you tomorrow morning.\n\nNote: I did not schedule a reminder in this turn, so this will not trigger automatically.`,
     });
   });
 
@@ -1044,7 +1048,7 @@ describe("runReplyAgent reminder commitment guard", () => {
 
     const result = await createRun();
     expect(result).toMatchObject({
-      text: "I'll remind you tomorrow morning.",
+      text: `${PERSONA_PREFIX}I'll remind you tomorrow morning.`,
     });
   });
 });

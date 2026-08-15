@@ -5,6 +5,7 @@ import { withTempHome as withTempHomeBase } from "../../test/helpers/temp-home.j
 import { runEmbeddedPiAgent } from "../agents/pi-embedded.js";
 import type { OpenClawConfig } from "../config/config.js";
 import { getReplyFromConfig } from "./reply.js";
+import { stripPersonaIcon } from "./reply/persona.js";
 
 function makeResult(text: string) {
   return {
@@ -67,7 +68,9 @@ describe("getReplyFromConfig media note plumbing", () => {
       );
 
       const text = Array.isArray(res) ? res[0]?.text : res?.text;
-      expect(text).toBe("ok");
+      // The reply carries a persona icon (reply/persona.ts); this test is about
+      // media plumbing, so compare the text without it.
+      expect(stripPersonaIcon(text ?? "")).toBe("ok");
       expect(seenPrompt).toBeTruthy();
       expect(seenPrompt).toContain("[media attached: 2 files]");
       const idxA = seenPrompt?.indexOf("[media attached 1/2: /tmp/a.png");
