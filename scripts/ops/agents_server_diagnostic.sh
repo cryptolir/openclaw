@@ -26,6 +26,9 @@
 #   - disk >= DISK_WARN% ........................................ P2
 #   - no docker log rotation (unbounded logs) ................... P2
 #   - docker.env key not reaching the container ................. P2
+#   - SECRETS CONTAINMENT: container can read a non-empty secrets
+#     file, or a .bak/.tmp snapshot, through any mount ........... P1
+#   - compose file missing the secrets shadow line ............... P1
 #   - agent session dir large (>SESSION_DIR_WARN_MB MiB) ......... P2
 #   - agent workspace dir large (>WORKSPACE_DIR_WARN_MB MiB) ..... P1
 #   - mcp-bridge "No servers configured" noise .................. P3
@@ -359,6 +362,43 @@ else
     printf '  %s  [%s/%s] %s\n          %s\n' "$sev" "$host" "$agent" "$title" "$detail"
   done
   echo; echo "  Totals: P0=${c0}  P1=${c1}  P2=${c2}  P3=${c3}"
+fi
+
+# ── D2. SECRETS CONTAINMENT (dashboard#359 Rev 28, Invariants 17/18) ─────────
+# The shadow mount is a CONFIG invariant a future deploy could silently drop;
+# this check makes that loud. Artifact-level by design: we test what each
+# container can actually read, never what the compose file intends.
+for cname in $(docker ps --format '{{.Names}}' | grep -- '-openclaw-gateway-1' 2>/dev/null); do
+  agent="${cname%-openclaw-gateway-1}"
+  # Invariant 17: the secrets path must exist, be ZERO bytes, and be unwritable.
+  cread=$(docker exec "$cname" sh -c '
+    if [ ! -e /home/node/.openclaw/docker.env ]; then echo NOFILE
+    elif [ -s /home/node/.openclaw/docker.env ]; then echo READABLE-NONEMPTY
+    elif touch /home/node/.openclaw/docker.env 2>/dev/null; then echo WRITABLE
+    else echo SHADOWED; fi' 2>/dev/null || echo EXEC-FAILED)
+  case "$cread" in
+    SHADOWED) ;;  # healthy
+    READABLE-NONEMPTY)
+      em "ISSUE|P1|$H|$agent|Container can READ its secrets file|The shadow mount is missing or broken: /home/node/.openclaw/docker.env is non-empty inside the container, so every key in it (wallet keys included) is readable by the agent. Fix: confirm /opt/openclaw/docker-compose.yml carries the empty.env shadow line for BOTH services, /opt/openclaw/empty.env exists and is empty, then recreate: cd /opt/openclaw && docker compose -p ${agent} --env-file /root/.openclaw/agents/${agent}/docker.env up -d openclaw-gateway" ;;
+    WRITABLE)
+      em "ISSUE|P1|$H|$agent|Secrets shadow is WRITABLE from the container|The shadow must be read-only (:ro). A writable shadow lets the agent alter what the host believes about its own env. Same fix path as the shadow line; verify the :ro suffix." ;;
+    NOFILE)
+      em "ISSUE|P2|$H|$agent|No secrets file visible in container|Neither the real file nor the shadow is present at /home/node/.openclaw/docker.env — the shadow line may point at a missing /opt/openclaw/empty.env (docker then creates a DIRECTORY, or the mount failed). Verify empty.env exists on the host." ;;
+    *)
+      em "ISSUE|P2|$H|$agent|Secrets containment probe failed|docker exec could not determine the container view ($cread). Rerun by hand: docker exec $cname ls -la /home/node/.openclaw/docker.env" ;;
+  esac
+  # Invariant 18: no plaintext snapshot reachable through the same mount.
+  snaps=$(docker exec "$cname" sh -c 'ls /home/node/.openclaw/docker.env.bak* /home/node/.openclaw/docker.env.tmp* 2>/dev/null | head -3' 2>/dev/null)
+  if [ -n "$snaps" ]; then
+    em "ISSUE|P1|$H|$agent|Secrets SNAPSHOT reachable from container|Plaintext .bak/.tmp snapshots of the secrets file are visible inside the container: ${snaps}. These predate the backups-out-of-mount change (dashboard PR #373) or were written by an old dashboard build. Move them: mkdir -p /root/.openclaw/backups && mv /root/.openclaw/agents/${agent}/docker.env.bak* /root/.openclaw/agents/${agent}/docker.env.tmp* /root/.openclaw/backups/ 2>/dev/null" ;
+  fi
+done
+# Invariant 17 precondition: the compose file itself still carries the shadow.
+if ! grep -q "empty.env:/home/node/.openclaw/docker.env:ro" /opt/openclaw/docker-compose.yml 2>/dev/null; then
+  em "ISSUE|P1|$H|host|Compose file lost the secrets shadow line|/opt/openclaw/docker-compose.yml no longer mounts empty.env over docker.env. Every agent recreated from it will see its real secrets. Reconcile /opt/openclaw to the repo compose (which carries the line for both services)."
+fi
+if [ -s /opt/openclaw/empty.env ] 2>/dev/null; then
+  em "ISSUE|P1|$H|host|Shadow source file is NOT empty|/opt/openclaw/empty.env has content; every container mounts it AS its secrets file, so its content is fleet-visible. Truncate it: : > /opt/openclaw/empty.env"
 fi
 
 # ── E. write bug_list.md AUTOSCAN block ──────────────────────────────────────
