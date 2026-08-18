@@ -113,6 +113,15 @@ deploy_server() {
   fi
   echo "  OK: Image pulled"
 
+  # Step 2b: The secrets shadow source must exist before any compose up —
+  # docker-compose.yml bind-mounts /opt/openclaw/empty.env over each agent
+  # container docker.env (dashboard#359 Rev 28). A missing source would make
+  # docker create it as a DIRECTORY, breaking the mount.
+  ssh "$server" "touch ${COMPOSE_DIR}/empty.env && chmod 444 ${COMPOSE_DIR}/empty.env && [ ! -s ${COMPOSE_DIR}/empty.env ]" || {
+    echo "  ERROR: ${COMPOSE_DIR}/empty.env missing or NON-EMPTY on $server - refusing to deploy"
+    return 1
+  }
+
   # Step 3: Discover agents (only directories that contain a docker.env)
   echo ""
   echo "-> Discovering agents..."

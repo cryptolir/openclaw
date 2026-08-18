@@ -51,6 +51,17 @@ services:
     volumes:
       - ${OPENCLAW_CONFIG_DIR}:/home/node/.openclaw
       - ${OPENCLAW_WORKSPACE_DIR}:/home/node/.openclaw/workspace
+      # Secrets shadow (dashboard#359 Rev 28, Invariant 17). The config-dir bind
+      # above exposes the agent's own docker.env — the file compose itself reads
+      # for ${OPENCLAW_GATEWAY_PORT} etc. — to the container, wallet keys
+      # included. The container NEVER reads it (this compose has no env_file;
+      # the environment allowlist above is the only conduit — verified against
+      # the running fleet), so an empty read-only file is mounted over it.
+      # /opt/openclaw/empty.env is created by deploy.sh on every deploy.
+      # REMOVING THIS LINE RE-EXPOSES EVERY SECRET; the daily diagnostic
+      # (agents_server_diagnostic.sh) alerts P1 if any container can read a
+      # non-empty secrets file.
+      - /opt/openclaw/empty.env:/home/node/.openclaw/docker.env:ro
     ports:
       - "${OPENCLAW_GATEWAY_PORT:-18789}:18789"
       - "${OPENCLAW_BRIDGE_PORT:-18790}:18790"
@@ -126,6 +137,17 @@ services:
     volumes:
       - ${OPENCLAW_CONFIG_DIR}:/home/node/.openclaw
       - ${OPENCLAW_WORKSPACE_DIR}:/home/node/.openclaw/workspace
+      # Secrets shadow (dashboard#359 Rev 28, Invariant 17). The config-dir bind
+      # above exposes the agent's own docker.env — the file compose itself reads
+      # for ${OPENCLAW_GATEWAY_PORT} etc. — to the container, wallet keys
+      # included. The container NEVER reads it (this compose has no env_file;
+      # the environment allowlist above is the only conduit — verified against
+      # the running fleet), so an empty read-only file is mounted over it.
+      # /opt/openclaw/empty.env is created by deploy.sh on every deploy.
+      # REMOVING THIS LINE RE-EXPOSES EVERY SECRET; the daily diagnostic
+      # (agents_server_diagnostic.sh) alerts P1 if any container can read a
+      # non-empty secrets file.
+      - /opt/openclaw/empty.env:/home/node/.openclaw/docker.env:ro
     stdin_open: true
     tty: true
     init: true
