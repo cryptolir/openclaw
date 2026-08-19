@@ -397,8 +397,22 @@ done
 if ! grep -q "empty.env:/home/node/.openclaw/docker.env:ro" /opt/openclaw/docker-compose.yml 2>/dev/null; then
   em "ISSUE|P1|$H|host|Compose file lost the secrets shadow line|/opt/openclaw/docker-compose.yml no longer mounts empty.env over docker.env. Every agent recreated from it will see its real secrets. Reconcile /opt/openclaw to the repo compose (which carries the line for both services)."
 fi
-if [ -s /opt/openclaw/empty.env ] 2>/dev/null; then
+# OB-43: assert the shadow SOURCE positively — exists, is a regular file, is
+# empty. The first version of this check only fired on "non-empty", so a MISSING
+# file or a DIRECTORY (what docker auto-creates when the bind source is gone, and
+# what the deploy's `git stash -u` actually produced) passed silently. The failure
+# is not a silent exposure but an outage: the next container recreate on this host
+# dies with "not a directory", AFTER compose down has stopped the running one.
+if [ -d /opt/openclaw/empty.env ]; then
+  em "ISSUE|P1|$H|host|Shadow source is a DIRECTORY|/opt/openclaw/empty.env is a directory — docker created it because the real file was missing at a compose up (OB-43; the deploy's git stash -u sweeps this untracked file away). EVERY container recreate on this host will now fail with 'not a directory' after compose down has already stopped it. Fix: rmdir /opt/openclaw/empty.env && install -m 444 /dev/null /opt/openclaw/empty.env"
+elif [ ! -f /opt/openclaw/empty.env ]; then
+  em "ISSUE|P1|$H|host|Shadow source is MISSING|/opt/openclaw/empty.env does not exist. The next container recreate mounts an auto-created DIRECTORY over docker.env and fails to start (OB-43). Fix: install -m 444 /dev/null /opt/openclaw/empty.env"
+elif [ -s /opt/openclaw/empty.env ]; then
   em "ISSUE|P1|$H|host|Shadow source file is NOT empty|/opt/openclaw/empty.env has content; every container mounts it AS its secrets file, so its content is fleet-visible. Truncate it: : > /opt/openclaw/empty.env"
+fi
+# The host-local guard that stops the deploy's `git stash -u` eating it again.
+if ! grep -qxF 'empty.env' /opt/openclaw/.git/info/exclude 2>/dev/null; then
+  em "ISSUE|P2|$H|host|Shadow source not git-excluded|/opt/openclaw/empty.env is untracked and NOT in .git/info/exclude, so the dashboard deploy's auto-stash (git stash push -u) will sweep it away on the next deploy over a dirty tree (OB-43). The deploy route also re-creates it, but this is the cheap belt: echo 'empty.env' >> /opt/openclaw/.git/info/exclude"
 fi
 
 # ── E. write bug_list.md AUTOSCAN block ──────────────────────────────────────
