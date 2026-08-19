@@ -66,4 +66,15 @@ export default defineConfig([
     fixedExtension: false,
     platform: "node",
   },
+  {
+    // AgentGlob Hyperliquid MCP server. Spawned by the openclaw gateway as an
+    // MCP child process. A thin typed proxy over the dashboard's
+    // /api/runtime/hyperliquid/* endpoints — it holds no credential and never
+    // contacts the exchange, so entries are explicit here rather than globbed.
+    entry: "src/mcp/hyperliquid/server.ts",
+    outDir: "dist/mcp/hyperliquid",
+    env,
+    fixedExtension: false,
+    platform: "node",
+  },
 ]);
