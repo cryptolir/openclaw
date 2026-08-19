@@ -336,6 +336,16 @@ else
   echo "ISSUE|P2|deps|-|Dependency audit missing|state file absent or >6h old — the 05:45 deps-audit cron did not run or failed." >>"$TMP"
 fi
 
+# ── Merge security-audit issues (state file from security-audit-cron.sh, 05:52;
+#    an absent/stale file is itself a P2 — a dead security scan must not read
+#    as a clean one) ────────────────────────────────────────────────────────────
+SEC_ISSUES_FILE="${SEC_ISSUES_FILE:-/var/tmp/agentglob-security-issues.txt}"
+if [[ -f "$SEC_ISSUES_FILE" && -n "$(find "$SEC_ISSUES_FILE" -mmin -360 2>/dev/null)" ]]; then
+  grep '^ISSUE|' "$SEC_ISSUES_FILE" >>"$TMP" 2>/dev/null || true
+else
+  echo "ISSUE|P2|sec|-|Security audit missing|state file absent or >6h old — the 05:52 security-audit cron did not run or failed." >>"$TMP"
+fi
+
 # ── A+B report ───────────────────────────────────────────────────────────────
 echo; echo "════════ A+B. SERVER HEALTH & AGENT STATUS ════════"
 for h in $SELECT; do

@@ -250,6 +250,12 @@ if command -v msmtp >/dev/null 2>&1; then
     else
       printf '═══════ DEPENDENCY AUDIT ═══════\n⚠ report missing or stale (>6h) — the 05:45 deps-audit cron produced no fresh output; see /var/log/agentglob-deps.log\n\n'
     fi
+    SEC_REPORT_FILE=/var/tmp/agentglob-security-report.txt
+    if [[ -f "$SEC_REPORT_FILE" && -n "$(find "$SEC_REPORT_FILE" -mmin -360 2>/dev/null)" ]]; then
+      printf '═══════ SECURITY AUDIT (05:52 UTC run) ═══════\n%s\n\n' "$(cat "$SEC_REPORT_FILE")"
+    else
+      printf '═══════ SECURITY AUDIT ═══════\n⚠ report missing or stale (>6h) — the 05:52 security-audit cron produced no fresh output; see /var/log/agentglob-security.log\n\n'
+    fi
     printf 'Bug list: %s\n' "$BUG_LIST_URL"
     printf 'Deploy log: %s\n' "$FEATURE_RELEASES_URL"
   } | msmtp "$EMAIL_TO" \

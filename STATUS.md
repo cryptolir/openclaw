@@ -11,8 +11,9 @@
 > One branch = one owner. This table lists **claimed** branches only — for every
 > open PR run `gh pr list --repo cryptolir/openclaw-dashboard`.
 
-| Repo | Branch | PR  | Status | Owner | Files / Areas Touched | Validation | Next Concrete Step | Notes |
-| ---- | ------ | --- | ------ | ----- | --------------------- | ---------- | ------------------ | ----- |
+| Repo     | Branch                   | PR  | Status | Owner  | Files / Areas Touched                                                                     | Validation                                               | Next Concrete Step                                                 | Notes                                                                  |
+| -------- | ------------------------ | --- | ------ | ------ | ----------------------------------------------------------------------------------------- | -------------------------------------------------------- | ------------------------------------------------------------------ | ---------------------------------------------------------------------- |
+| openclaw | feat/security-audit-cron | TBD | review | Claude | scripts/ops/security-audit-cron.sh (new), agents_server_diagnostic.sh, diagnostic-cron.sh | bash -n + live run vs eu/us/dev 2026-08-19 (10 findings) | owner review + merge; then add the 05:52 crontab line on DevAgents | daily read-only security scan; ingests into the 06:00 email + bug_list |
 
 ---
 
