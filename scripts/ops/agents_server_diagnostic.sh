@@ -82,7 +82,9 @@ WORKSPACE_DIR_WARN_MB=500 # MiB per-agent workspace/ dir → P1
 #     forwarding bug.
 #
 # Deliberately NOT silenced, because they DO have readers and so a missing
-# forward is a real fault: GEMINI_API_KEY (16 refs), RPC_URL (2 refs). The first
+# forward is a real fault: GEMINI_API_KEY (16 refs). RPC_URL was listed here too
+# until its only reader — the ostium skill — was removed; the variable is gone
+# from the global env and from every agent, so there is nothing left to flag.
 # run of this check found GEMINI_API_KEY on an EU agent with no compose entry -
 # a fifth instance of the OB-21 class, which is the whole point of the check.
 ENV_FORWARD_IGNORE="OPENCLAW_IMAGE OPENCLAW_CONFIG_DIR OPENCLAW_WORKSPACE_DIR OPENCLAW_GATEWAY_PORT OPENCLAW_BRIDGE_PORT OPENCLAW_GATEWAY_BIND OPENCLAW_HOME_VOLUME OPENCLAW_EXTRA_MOUNTS OPENCLAW_DOCKER_APT_PACKAGES NVIDIA_API_KEY WALLET_PRIVATE_KEY RAIN_API_KEY HYPERLIQUID_PRIVATE_KEY GOG_KEYRING_PASSWORD GOG_KEYRING_BACKEND"
