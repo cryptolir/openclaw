@@ -253,7 +253,7 @@ for cname in $(docker ps -a --format '{{.Names}}' | grep -- '-openclaw-gateway-1
         printf "%s\n" "$_cenv" | grep -qx "$_k" || _missing="${_missing}${_k} "
       done
       if [ -n "$_missing" ]; then
-        em "ISSUE|P2|$H|$agent|Key in docker.env never reaches the container|Saved for this agent but missing from its container env: ${_missing}- so any skill needing it fails as though unconfigured, while the dashboard shows it set. Cause is nearly always the compose allowlist: add the key to BOTH service blocks in /opt/openclaw/docker-compose.yml (with a :- default so agents without it are unaffected), then recreate the agent with: cd /opt/openclaw && docker compose -p ${agent} --env-file ${envf} up -d openclaw-gateway. If the key IS already in the repo compose, then THIS HOST has drifted - reconcile /opt/openclaw to main."
+        em "ISSUE|P2|$H|$agent|Key in docker.env never reaches the container|Saved for this agent but missing from its container env: ${_missing}- so any skill needing it fails as though unconfigured, while the dashboard shows it set. Cause is nearly always the compose allowlist: add the key to BOTH service blocks in /opt/openclaw/docker-compose.yml (with a :- default so agents without it are unaffected), then recreate the agent with: cd /opt/openclaw && docker compose -p ${agent} --env-file ${envf} up -d --force-recreate openclaw-gateway (a plain up -d is a no-op when the config hash matches). If the key IS already in the repo compose, then THIS HOST has drifted - reconcile /opt/openclaw to main."
       fi
     fi
   fi
@@ -321,7 +321,7 @@ for cname in $(docker ps --format '{{.Names}}' | grep -- '-openclaw-gateway-1' 2
   case "$cread" in
     SHADOWED) ;;  # healthy
     READABLE-NONEMPTY)
-      em "ISSUE|P1|$H|$agent|Container can READ its secrets file|The shadow mount is missing or broken: /home/node/.openclaw/docker.env is non-empty inside the container, so every key in it (wallet keys included) is readable by the agent. Fix: confirm /opt/openclaw/docker-compose.yml carries the empty.env shadow line for BOTH services, /opt/openclaw/empty.env exists and is empty, then recreate: cd /opt/openclaw && docker compose -p ${agent} --env-file /root/.openclaw/agents/${agent}/docker.env up -d openclaw-gateway" ;;
+      em "ISSUE|P1|$H|$agent|Container can READ its secrets file|The shadow mount is missing or broken: /home/node/.openclaw/docker.env is non-empty inside the container, so every key in it (wallet keys included) is readable by the agent. Fix: confirm /opt/openclaw/docker-compose.yml carries the empty.env shadow line for BOTH services, /opt/openclaw/empty.env exists and is empty, then recreate: cd /opt/openclaw && docker compose -p ${agent} --env-file /root/.openclaw/agents/${agent}/docker.env up -d --force-recreate openclaw-gateway - the --force-recreate is REQUIRED: a plain up -d matches the stored config hash, prints Running and changes nothing (verified on 1stClaw 2026-08-22). Re-probe this agent afterwards rather than assuming; confirm the file reads 0 bytes inside the container." ;;
     WRITABLE)
       em "ISSUE|P1|$H|$agent|Secrets shadow is WRITABLE from the container|The shadow must be read-only (:ro). A writable shadow lets the agent alter what the host believes about its own env. Same fix path as the shadow line; verify the :ro suffix." ;;
     NOFILE)
