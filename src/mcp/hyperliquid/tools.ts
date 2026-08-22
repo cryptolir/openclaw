@@ -195,4 +195,43 @@ export const HYPERLIQUID_TOOLS: ToolDef[] = [
         isCross: a.isCross !== false,
       }),
   },
+  {
+    name: "hl_transfer",
+    description:
+      "Move USDC from the spot account into the perp account so it can back trades. This is the ONLY direction — perp-to-spot does not exist here, deliberately. Amount is whole US dollars (no cents: the dashboard sets the cents as a tracking tag and sends slightly less than requested). One transfer at a time per account; if one is unresolved, reconcile with hl_transfer_status before retrying. Bounded by the owner-set daily limit.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        amount: {
+          type: "number",
+          description: "Whole US dollars to move, e.g. 20. Minimum 5.",
+        },
+        direction: {
+          type: "string",
+          enum: ["spot_to_perp"],
+          description: "Only spot_to_perp exists.",
+        },
+      },
+      required: ["amount", "direction"],
+    },
+    handler: (c, a) =>
+      c.transfer({
+        amount: num(a, "amount"),
+        direction: "spot_to_perp",
+      }),
+  },
+  {
+    name: "hl_transfer_status",
+    description:
+      "Reconcile the account's in-flight transfer against the exchange ledger: reports landed, still-pending (with whether a retry is allowed yet), or blocked (an owner must clear a double-land).",
+    inputSchema: { type: "object", properties: {} },
+    handler: (c) => c.transferStatus(),
+  },
+  {
+    name: "hl_account_status",
+    description:
+      "Trading readiness for this agent's own account: whether Hyperliquid is enabled, the Trading Key is present, the exchange still honours its approval, and when that approval expires. Use this to explain WHY an order might be refused, instead of discovering it from the refusal.",
+    inputSchema: { type: "object", properties: {} },
+    handler: (c) => c.accountStatus(),
+  },
 ];

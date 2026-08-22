@@ -87,4 +87,44 @@ export class HyperliquidRuntimeClient {
   setLeverage(body: { coin: string; leverage: number; isCross?: boolean }): Promise<unknown> {
     return this.post("/leverage", body);
   }
+
+  /**
+   * Fund the perp account. The only direction that exists is spot_to_perp —
+   * the dashboard refuses everything else (plan hyperliquid-fund-movement,
+   * F13). Amount is whole dollars; the dashboard allocates the cents.
+   */
+  transfer(body: { amount: number; direction: "spot_to_perp" }): Promise<unknown> {
+    return this.post("/transfer", body);
+  }
+
+  private async get(path: string): Promise<unknown> {
+    const res = await fetch(`${this.baseUrl}/api/runtime/hyperliquid${path}`, {
+      headers: { Authorization: `Bearer ${this.token}` },
+    });
+    const text = await res.text();
+    let json: unknown;
+    try {
+      json = text ? JSON.parse(text) : {};
+    } catch {
+      throw new RuntimeClientError(
+        res.status,
+        `non-JSON response from the runtime (${res.status})`,
+      );
+    }
+    if (!res.ok) {
+      const o = json as { error?: string; code?: string };
+      throw new RuntimeClientError(res.status, o?.error ?? `runtime error ${res.status}`, o?.code);
+    }
+    return json;
+  }
+
+  /** Reconcile an in-flight transfer against the exchange ledger. */
+  transferStatus(): Promise<unknown> {
+    return this.get("/transfer");
+  }
+
+  /** Trading readiness: key present, approval, expiry. Read-only. */
+  accountStatus(): Promise<unknown> {
+    return this.get("/status");
+  }
 }
