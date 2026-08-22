@@ -306,6 +306,73 @@ for e in entries:
 PYWD
 fi
 
+# ── D2. SECRETS CONTAINMENT (dashboard#359 Rev 28, Invariants 17/18) ─────────
+# The shadow mount is a CONFIG invariant a future deploy could silently drop;
+# this check makes that loud. Artifact-level by design: we test what each
+# container can actually read, never what the compose file intends.
+for cname in $(docker ps --format '{{.Names}}' | grep -- '-openclaw-gateway-1' 2>/dev/null); do
+  agent="${cname%-openclaw-gateway-1}"
+  # Invariant 17: the secrets path must exist, be ZERO bytes, and be unwritable.
+  cread=$(docker exec "$cname" sh -c '
+    if [ ! -e /home/node/.openclaw/docker.env ]; then echo NOFILE
+    elif [ -s /home/node/.openclaw/docker.env ]; then echo READABLE-NONEMPTY
+    elif touch /home/node/.openclaw/docker.env 2>/dev/null; then echo WRITABLE
+    else echo SHADOWED; fi' 2>/dev/null || echo EXEC-FAILED)
+  case "$cread" in
+    SHADOWED) ;;  # healthy
+    READABLE-NONEMPTY)
+      em "ISSUE|P1|$H|$agent|Container can READ its secrets file|The shadow mount is missing or broken: /home/node/.openclaw/docker.env is non-empty inside the container, so every key in it (wallet keys included) is readable by the agent. Fix: confirm /opt/openclaw/docker-compose.yml carries the empty.env shadow line for BOTH services, /opt/openclaw/empty.env exists and is empty, then recreate: cd /opt/openclaw && docker compose -p ${agent} --env-file /root/.openclaw/agents/${agent}/docker.env up -d openclaw-gateway" ;;
+    WRITABLE)
+      em "ISSUE|P1|$H|$agent|Secrets shadow is WRITABLE from the container|The shadow must be read-only (:ro). A writable shadow lets the agent alter what the host believes about its own env. Same fix path as the shadow line; verify the :ro suffix." ;;
+    NOFILE)
+      em "ISSUE|P2|$H|$agent|No secrets file visible in container|Neither the real file nor the shadow is present at /home/node/.openclaw/docker.env — the shadow line may point at a missing /opt/openclaw/empty.env (docker then creates a DIRECTORY, or the mount failed). Verify empty.env exists on the host." ;;
+    *)
+      em "ISSUE|P2|$H|$agent|Secrets containment probe failed|docker exec could not determine the container view ($cread). Rerun by hand: docker exec $cname ls -la /home/node/.openclaw/docker.env" ;;
+  esac
+  # Invariant 18: no plaintext snapshot reachable through the same mount.
+  snaps=$(docker exec "$cname" sh -c 'ls /home/node/.openclaw/docker.env.bak* /home/node/.openclaw/docker.env.tmp* 2>/dev/null | head -3' 2>/dev/null)
+  if [ -n "$snaps" ]; then
+    em "ISSUE|P1|$H|$agent|Secrets SNAPSHOT reachable from container|Plaintext .bak/.tmp snapshots of the secrets file are visible inside the container: ${snaps}. These predate the backups-out-of-mount change (dashboard PR #373) or were written by an old dashboard build. Move them: mkdir -p /root/.openclaw/backups && mv /root/.openclaw/agents/${agent}/docker.env.bak* /root/.openclaw/agents/${agent}/docker.env.tmp* /root/.openclaw/backups/ 2>/dev/null" ;
+  fi
+done
+# Invariant 17 precondition: the compose file itself still carries the shadow.
+if ! grep -q "empty.env:/home/node/.openclaw/docker.env:ro" /opt/openclaw/docker-compose.yml 2>/dev/null; then
+  em "ISSUE|P1|$H|host|Compose file lost the secrets shadow line|/opt/openclaw/docker-compose.yml no longer mounts empty.env over docker.env. Every agent recreated from it will see its real secrets. Reconcile /opt/openclaw to the repo compose (which carries the line for both services)."
+fi
+if [ -s /opt/openclaw/empty.env ] 2>/dev/null; then
+  em "ISSUE|P1|$H|host|Shadow source file is NOT empty|/opt/openclaw/empty.env has content; every container mounts it AS its secrets file, so its content is fleet-visible. Truncate it: : > /opt/openclaw/empty.env"
+fi
+
+# ── D3. GLOBAL HOST — Core APIs + file mode ──────────────────────────────────
+# /opt/openclaw/.env is the Global Host: the dashboard seeds every new Agent's
+# docker.env from it, so anything sitting here is inherited by every Agent
+# created afterwards. Checked against the Core APIs, which are defined in the
+# DASHBOARD repo (lib/agent-constants.ts GLOBAL_KEYS, docs/TERMINOLOGY.md
+# "Core APIs"). Nothing syncs the two repos — if that list changes, change this
+# one in the same PR. Key NAMES only are ever emitted, never a value.
+GLOBAL_ENV=/opt/openclaw/.env
+CORE_APIS="OPENROUTER_API_KEY VENICE_API_KEY OPENAI_API_KEY BRAVE_API_KEY ELEVENLABS_API_KEY NVIDIA_API_KEY"
+if [ ! -f "$GLOBAL_ENV" ]; then
+  em "ISSUE|P1|$H|host|No Global Host env file|${GLOBAL_ENV} is missing, so a new Agent on this host is seeded from nothing."
+else
+  gmode=$(stat -c '%a' "$GLOBAL_ENV" 2>/dev/null || echo '?')
+  if [ "$gmode" != "600" ]; then
+    em "ISSUE|P2|$H|host|Global Host env is not mode 600|${GLOBAL_ENV} is mode ${gmode}, readable beyond root, and it holds every Core API key. No container mounts it, so this is defense-in-depth rather than a live leak. Fix: chmod 600 ${GLOBAL_ENV}"
+  fi
+  gkeys=$(grep -oE '^[A-Za-z_][A-Za-z0-9_]*=' "$GLOBAL_ENV" 2>/dev/null | tr -d '=' | sort -u)
+  gmissing=""
+  for k in $CORE_APIS; do
+    printf '%s\n' "$gkeys" | grep -qx "$k" || gmissing="${gmissing} ${k}"
+  done
+  [ -n "$gmissing" ] && em "ISSUE|P1|$H|host|Global Host is missing Core APIs|Absent:${gmissing} — every Agent seeded on this host from now on starts without them. The Core APIs are defined in docs/TERMINOLOGY.md in the dashboard repo."
+  gextra=""
+  for k in $gkeys; do
+    case "$k" in OPENCLAW_*) continue ;; esac
+    printf '%s\n' "$CORE_APIS" | tr ' ' '\n' | grep -qx "$k" || gextra="${gextra} ${k}"
+  done
+  [ -n "$gextra" ] && em "ISSUE|P1|$H|host|Global Host carries non-Core-API secrets|Extra keys:${gextra} — the Global Host must hold ONLY the Core APIs plus this server own OPENCLAW_* settings (docs/TERMINOLOGY.md, Global Host). Every key here is inherited by every Agent the dashboard seeds from it, so a per-Agent or per-person credential belongs in that Agent own docker.env instead."
+fi
+
 em "METRIC|$H|reachable|yes|ok"
 REMOTE
 }
@@ -364,43 +431,6 @@ else
     printf '  %s  [%s/%s] %s\n          %s\n' "$sev" "$host" "$agent" "$title" "$detail"
   done
   echo; echo "  Totals: P0=${c0}  P1=${c1}  P2=${c2}  P3=${c3}"
-fi
-
-# ── D2. SECRETS CONTAINMENT (dashboard#359 Rev 28, Invariants 17/18) ─────────
-# The shadow mount is a CONFIG invariant a future deploy could silently drop;
-# this check makes that loud. Artifact-level by design: we test what each
-# container can actually read, never what the compose file intends.
-for cname in $(docker ps --format '{{.Names}}' | grep -- '-openclaw-gateway-1' 2>/dev/null); do
-  agent="${cname%-openclaw-gateway-1}"
-  # Invariant 17: the secrets path must exist, be ZERO bytes, and be unwritable.
-  cread=$(docker exec "$cname" sh -c '
-    if [ ! -e /home/node/.openclaw/docker.env ]; then echo NOFILE
-    elif [ -s /home/node/.openclaw/docker.env ]; then echo READABLE-NONEMPTY
-    elif touch /home/node/.openclaw/docker.env 2>/dev/null; then echo WRITABLE
-    else echo SHADOWED; fi' 2>/dev/null || echo EXEC-FAILED)
-  case "$cread" in
-    SHADOWED) ;;  # healthy
-    READABLE-NONEMPTY)
-      em "ISSUE|P1|$H|$agent|Container can READ its secrets file|The shadow mount is missing or broken: /home/node/.openclaw/docker.env is non-empty inside the container, so every key in it (wallet keys included) is readable by the agent. Fix: confirm /opt/openclaw/docker-compose.yml carries the empty.env shadow line for BOTH services, /opt/openclaw/empty.env exists and is empty, then recreate: cd /opt/openclaw && docker compose -p ${agent} --env-file /root/.openclaw/agents/${agent}/docker.env up -d openclaw-gateway" ;;
-    WRITABLE)
-      em "ISSUE|P1|$H|$agent|Secrets shadow is WRITABLE from the container|The shadow must be read-only (:ro). A writable shadow lets the agent alter what the host believes about its own env. Same fix path as the shadow line; verify the :ro suffix." ;;
-    NOFILE)
-      em "ISSUE|P2|$H|$agent|No secrets file visible in container|Neither the real file nor the shadow is present at /home/node/.openclaw/docker.env — the shadow line may point at a missing /opt/openclaw/empty.env (docker then creates a DIRECTORY, or the mount failed). Verify empty.env exists on the host." ;;
-    *)
-      em "ISSUE|P2|$H|$agent|Secrets containment probe failed|docker exec could not determine the container view ($cread). Rerun by hand: docker exec $cname ls -la /home/node/.openclaw/docker.env" ;;
-  esac
-  # Invariant 18: no plaintext snapshot reachable through the same mount.
-  snaps=$(docker exec "$cname" sh -c 'ls /home/node/.openclaw/docker.env.bak* /home/node/.openclaw/docker.env.tmp* 2>/dev/null | head -3' 2>/dev/null)
-  if [ -n "$snaps" ]; then
-    em "ISSUE|P1|$H|$agent|Secrets SNAPSHOT reachable from container|Plaintext .bak/.tmp snapshots of the secrets file are visible inside the container: ${snaps}. These predate the backups-out-of-mount change (dashboard PR #373) or were written by an old dashboard build. Move them: mkdir -p /root/.openclaw/backups && mv /root/.openclaw/agents/${agent}/docker.env.bak* /root/.openclaw/agents/${agent}/docker.env.tmp* /root/.openclaw/backups/ 2>/dev/null" ;
-  fi
-done
-# Invariant 17 precondition: the compose file itself still carries the shadow.
-if ! grep -q "empty.env:/home/node/.openclaw/docker.env:ro" /opt/openclaw/docker-compose.yml 2>/dev/null; then
-  em "ISSUE|P1|$H|host|Compose file lost the secrets shadow line|/opt/openclaw/docker-compose.yml no longer mounts empty.env over docker.env. Every agent recreated from it will see its real secrets. Reconcile /opt/openclaw to the repo compose (which carries the line for both services)."
-fi
-if [ -s /opt/openclaw/empty.env ] 2>/dev/null; then
-  em "ISSUE|P1|$H|host|Shadow source file is NOT empty|/opt/openclaw/empty.env has content; every container mounts it AS its secrets file, so its content is fleet-visible. Truncate it: : > /opt/openclaw/empty.env"
 fi
 
 # ── E. write bug_list.md AUTOSCAN block ──────────────────────────────────────
