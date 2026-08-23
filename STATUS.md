@@ -20,6 +20,35 @@
 
 ## Last Session
 
+- **Date**: 2026-08-23 (dashboard: core-key BYOK plan merged by owner call, owner: Claude)
+- **Repo**: openclaw-dashboard, branch `plan/core-key-byok`, PR #430 squash-merged as `3995810`
+- **What landed**: `docs/plans/core-key-byok.md` ONLY. No implementation code exists for this plan
+  anywhere — not on main, not on a branch. The deploy workflow SKIPPED (docs-only path filter);
+  nothing runtime changed.
+- **How it ended**: 16 Codex rounds, ~40 findings folded. Merged on an explicit owner decision to
+  stop the loop, NOT on a clean verdict. A round-17 review may exist that was never folded — treat
+  its findings as open and raise them against the implementation PR, which gets its own adversarial
+  review per the protocol.
+- **Owner decisions recorded in the doc** (do not relitigate):
+  - **Decision A** (Rev 8): no ordering protocol for concurrent core-key writes. Per-file CAS plus
+    the existing daily reconcile. Same trade as the hermes downgrade machinery.
+  - **K1** (Rev 14): a bounded keyless window is ACCEPTED for OPTIONAL core keys only (those with
+    no Global Host default). K2 (removal-only fence) declined.
+  - **S3** (Rev 15): an Org override replaces an agent-owned value permanently, but never silently —
+    the Org SET previews the affected agents and writes only on a confirmation naming them. S1
+    (store the displaced credential) and S2 (silent destruction) both declined.
+  - **Fences are three, not one** (Rev 4 + Rev 8): issuance (`GMAIL_*`, `GCAL_*` — only the
+    feature's own handler may write; Calendar is Org-level with per-agent enablement, NOT
+    per-person), billing (`PINNED_BYOK_KEYS` — conditionally admissible via an owner-gated route),
+    and plan (feature entitlement under BYOK — a decision surface, not a key list).
+- **Next concrete step**: implement Phase 1 (hermes parity: preserve-merge in `buildHermesDockerEnv`,
+  descriptor-driven env path, capability flip — WITH the agent-surface owner gate, which cannot be
+  deferred to Phase 2). Phase 2 is the Org Core API Keys section PLUS the convergence engine.
+  Phase 3 (pinned billing keys) gates on #426.
+- **Still open elsewhere**: #426 (venice-byok plan) sits at its own round-4 escalation, unresolved.
+  #425 (hermes-credential-policy Revs 12-15) plan-only after the split; its implementation — the
+  `HERMES_VENICE_API_KEY` scoping — has never been built.
+
 - **Date**: 2026-08-10 (dashboard: plan-review-verdict logic hardened + merged, owner: Claude)
 - **Repo**: openclaw-dashboard (branch docs/review-verdict-fail-closed, squash-merged)
 - **What changed**:
