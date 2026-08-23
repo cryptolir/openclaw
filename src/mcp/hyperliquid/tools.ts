@@ -214,11 +214,19 @@ export const HYPERLIQUID_TOOLS: ToolDef[] = [
       },
       required: ["amount", "direction"],
     },
-    handler: (c, a) =>
-      c.transfer({
-        amount: num(a, "amount"),
-        direction: "spot_to_perp",
-      }),
+    handler: (c, a) => {
+      // The advertised enum does NOT bind: server.ts hands the raw arguments
+      // to the handler. Hardcoding the direction would turn a "move it back
+      // to spot" request into another deposit INTO perp - the opposite fund
+      // movement, silently. So refuse instead of rewriting.
+      const direction = str(a, "direction");
+      if (direction !== "spot_to_perp") {
+        throw new Error(
+          `direction must be "spot_to_perp"; "${direction}" is not supported and will not be substituted`,
+        );
+      }
+      return c.transfer({ amount: num(a, "amount"), direction });
+    },
   },
   {
     name: "hl_transfer_status",
