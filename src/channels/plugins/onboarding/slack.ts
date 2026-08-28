@@ -36,6 +36,15 @@ function setSlackDmPolicy(cfg: OpenClawConfig, dmPolicy: DmPolicy) {
   };
 }
 
+/**
+ * ⚠️ The bot scopes below are DUPLICATED in the dashboard repo
+ * (`cryptolir/openclaw-dashboard` lib/slack-token.ts, `REQUIRED_BOT_SCOPES`),
+ * which validates a pasted bot token's granted scopes against them before it
+ * saves the credential. Nothing syncs the two lists — CHANGE BOTH IN ONE PR,
+ * or the dashboard will reject tokens minted from this manifest (or accept
+ * tokens that cannot do what the channel now needs). Same duplication rule as
+ * the Core APIs list (#131 D3).
+ */
 function buildSlackManifest(botName: string) {
   const safeName = botName.trim() || "OpenClaw";
   const manifest = {
