@@ -9,12 +9,21 @@ export function serializeConfigForm(form: Record<string, unknown>): string {
   return `${JSON.stringify(form, null, 2).trimEnd()}\n`;
 }
 
+// A config path comes from the form UI, so it must never be able to reach an
+// object's prototype -- writing through __proto__/constructor/prototype would
+// pollute every object in the page.
+const FORBIDDEN_KEYS = new Set(["__proto__", "prototype", "constructor"]);
+
+function isForbiddenKey(key: string | number): boolean {
+  return typeof key === "string" && FORBIDDEN_KEYS.has(key);
+}
+
 export function setPathValue(
   obj: Record<string, unknown> | unknown[],
   path: Array<string | number>,
   value: unknown,
 ) {
-  if (path.length === 0) {
+  if (path.length === 0 || path.some(isForbiddenKey)) {
     return;
   }
   let current: Record<string, unknown> | unknown[] = obj;
@@ -56,7 +65,7 @@ export function removePathValue(
   obj: Record<string, unknown> | unknown[],
   path: Array<string | number>,
 ) {
-  if (path.length === 0) {
+  if (path.length === 0 || path.some(isForbiddenKey)) {
     return;
   }
   let current: Record<string, unknown> | unknown[] = obj;
