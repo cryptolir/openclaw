@@ -9,6 +9,8 @@ type LookupCallback = (
   family?: number,
 ) => void;
 
+type LookupResult = LookupAddress | readonly LookupAddress[];
+
 export class SsrFBlockedError extends Error {
   constructor(message: string) {
     super(message);
@@ -279,32 +281,61 @@ function extractIpv4FromEmbeddedIpv6(hextets: number[]): number[] | null {
   return null;
 }
 
-function isPrivateIpv4(parts: number[]): boolean {
-  const [octet1, octet2] = parts;
-  if (octet1 === 0) {
-    return true;
+type Ipv4Cidr = {
+  base: readonly [number, number, number, number];
+  prefixLength: number;
+};
+
+function ipv4ToUint(parts: readonly number[]): number {
+  const [a, b, c, d] = parts;
+  return (((a << 24) >>> 0) | (b << 16) | (c << 8) | d) >>> 0;
+}
+
+function ipv4RangeFromCidr(cidr: Ipv4Cidr): readonly [start: number, end: number] {
+  const base = ipv4ToUint(cidr.base);
+  const hostBits = 32 - cidr.prefixLength;
+  const mask = cidr.prefixLength === 0 ? 0 : (0xffffffff << hostBits) >>> 0;
+  const start = (base & mask) >>> 0;
+  const end = (start | (~mask >>> 0)) >>> 0;
+  return [start, end];
+}
+
+const BLOCKED_IPV4_SPECIAL_USE_CIDRS: readonly Ipv4Cidr[] = [
+  { base: [0, 0, 0, 0], prefixLength: 8 },
+  { base: [10, 0, 0, 0], prefixLength: 8 },
+  { base: [100, 64, 0, 0], prefixLength: 10 },
+  { base: [127, 0, 0, 0], prefixLength: 8 },
+  { base: [169, 254, 0, 0], prefixLength: 16 },
+  { base: [172, 16, 0, 0], prefixLength: 12 },
+  { base: [192, 0, 0, 0], prefixLength: 24 },
+  { base: [192, 0, 2, 0], prefixLength: 24 },
+  { base: [192, 88, 99, 0], prefixLength: 24 },
+  { base: [192, 168, 0, 0], prefixLength: 16 },
+  { base: [198, 18, 0, 0], prefixLength: 15 },
+  { base: [198, 51, 100, 0], prefixLength: 24 },
+  { base: [203, 0, 113, 0], prefixLength: 24 },
+  { base: [224, 0, 0, 0], prefixLength: 4 },
+  { base: [240, 0, 0, 0], prefixLength: 4 },
+];
+
+// Keep this table as the single source of IPv4 non-global policy.
+// Both plain IPv4 literals and IPv6-embedded IPv4 forms flow through it.
+const BLOCKED_IPV4_SPECIAL_USE_RANGES = BLOCKED_IPV4_SPECIAL_USE_CIDRS.map(ipv4RangeFromCidr);
+
+function isBlockedIpv4SpecialUse(parts: number[]): boolean {
+  if (parts.length !== 4) {
+    return false;
   }
-  if (octet1 === 10) {
-    return true;
-  }
-  if (octet1 === 127) {
-    return true;
-  }
-  if (octet1 === 169 && octet2 === 254) {
-    return true;
-  }
-  if (octet1 === 172 && octet2 >= 16 && octet2 <= 31) {
-    return true;
-  }
-  if (octet1 === 192 && octet2 === 168) {
-    return true;
-  }
-  if (octet1 === 100 && octet2 >= 64 && octet2 <= 127) {
-    return true;
+  const value = ipv4ToUint(parts);
+  for (const [start, end] of BLOCKED_IPV4_SPECIAL_USE_RANGES) {
+    if (value >= start && value <= end) {
+      return true;
+    }
   }
   return false;
 }
 
+// Returns true for private/internal and special-use non-global addresses.
 export function isPrivateIpAddress(address: string): boolean {
   let normalized = address.trim().toLowerCase();
   if (normalized.startsWith("[") && normalized.endsWith("]")) {
@@ -345,7 +376,7 @@ export function isPrivateIpAddress(address: string): boolean {
 
     const embeddedIpv4 = extractIpv4FromEmbeddedIpv6(hextets);
     if (embeddedIpv4) {
-      return isPrivateIpv4(embeddedIpv4);
+      return isBlockedIpv4SpecialUse(embeddedIpv4);
     }
 
     // IPv6 private/internal ranges
@@ -367,7 +398,7 @@ export function isPrivateIpAddress(address: string): boolean {
 
   const ipv4 = parseIpv4(normalized);
   if (ipv4) {
-    return isPrivateIpv4(ipv4);
+    return isBlockedIpv4SpecialUse(ipv4);
   }
   // Reject non-canonical IPv4 literal forms (octal/hex/short/packed) by default.
   if (isUnsupportedLegacyIpv4Literal(normalized)) {
@@ -403,6 +434,29 @@ export function isBlockedHostnameOrIp(hostname: string): boolean {
   return isBlockedHostnameNormalized(normalized) || isPrivateIpAddress(normalized);
 }
 
+const BLOCKED_HOST_OR_IP_MESSAGE = "Blocked hostname or private/internal/special-use IP address";
+const BLOCKED_RESOLVED_IP_MESSAGE = "Blocked: resolves to private/internal/special-use IP address";
+
+function assertAllowedHostOrIpOrThrow(hostnameOrIp: string): void {
+  if (isBlockedHostnameOrIp(hostnameOrIp)) {
+    throw new SsrFBlockedError(BLOCKED_HOST_OR_IP_MESSAGE);
+  }
+}
+
+function assertAllowedResolvedAddressesOrThrow(results: readonly LookupAddress[]): void {
+  for (const entry of results) {
+    // Reuse the exact same host/IP classifier as the pre-DNS check to avoid drift.
+    if (isBlockedHostnameOrIp(entry.address)) {
+      throw new SsrFBlockedError(BLOCKED_RESOLVED_IP_MESSAGE);
+    }
+  }
+}
+
+function normalizeLookupResults(results: LookupResult): readonly LookupAddress[] {
+  // Array.isArray does not narrow our readonly-array union, so assert the single case.
+  return Array.isArray(results) ? results : [results as LookupAddress];
+}
+
 export function createPinnedLookup(params: {
   hostname: string;
   addresses: string[];
@@ -423,6 +477,8 @@ export function createPinnedLookup(params: {
     address,
     family: address.includes(":") ? 6 : 4,
   }));
+  const ipv4Records = records.filter((entry) => entry.family === 4);
+  const automaticRecords = ipv4Records.length > 0 ? ipv4Records : records;
   let index = 0;
 
   return ((host: string, options?: unknown, callback?: unknown) => {
@@ -448,8 +504,8 @@ export function createPinnedLookup(params: {
     const candidates =
       requestedFamily === 4 || requestedFamily === 6
         ? records.filter((entry) => entry.family === requestedFamily)
-        : records;
-    const usable = candidates.length > 0 ? candidates : records;
+        : automaticRecords;
+    const usable = candidates.length > 0 ? candidates : automaticRecords;
     if (opts.all) {
       cb(null, usable as LookupAddress[]);
       return;
@@ -479,27 +535,28 @@ export async function resolvePinnedHostnameWithPolicy(
   const allowedHostnames = normalizeHostnameSet(params.policy?.allowedHostnames);
   const hostnameAllowlist = normalizeHostnameAllowlist(params.policy?.hostnameAllowlist);
   const isExplicitAllowed = allowedHostnames.has(normalized);
+  const skipPrivateNetworkChecks = allowPrivateNetwork || isExplicitAllowed;
 
   if (!matchesHostnameAllowlist(normalized, hostnameAllowlist)) {
     throw new SsrFBlockedError(`Blocked hostname (not in allowlist): ${hostname}`);
   }
 
-  if (!allowPrivateNetwork && !isExplicitAllowed && isBlockedHostnameOrIp(normalized)) {
-    throw new SsrFBlockedError("Blocked hostname or private/internal IP address");
+  if (!skipPrivateNetworkChecks) {
+    // Phase 1: fail fast for literal hosts/IPs before any DNS lookup side-effects.
+    assertAllowedHostOrIpOrThrow(normalized);
   }
 
   const lookupFn = params.lookupFn ?? dnsLookup;
-  const results = await lookupFn(normalized, { all: true });
+  const results = normalizeLookupResults(
+    (await lookupFn(normalized, { all: true })) as LookupResult,
+  );
   if (results.length === 0) {
     throw new Error(`Unable to resolve hostname: ${hostname}`);
   }
 
-  if (!allowPrivateNetwork && !isExplicitAllowed) {
-    for (const entry of results) {
-      if (isPrivateIpAddress(entry.address)) {
-        throw new SsrFBlockedError("Blocked: resolves to private/internal IP address");
-      }
-    }
+  if (!skipPrivateNetworkChecks) {
+    // Phase 2: re-check DNS answers so public hostnames cannot pivot to private targets.
+    assertAllowedResolvedAddressesOrThrow(results);
   }
 
   const addresses = Array.from(new Set(results.map((entry) => entry.address)));
@@ -526,6 +583,11 @@ export function createPinnedDispatcher(pinned: PinnedHostname): Dispatcher {
     connect: {
       lookup: pinned.lookup,
     },
+    // undici 8 negotiates HTTP/2 by default, and that connection path ignores
+    // the pinned lookup callback -- which would silently defeat DNS pinning.
+    // Our undici pin (^7) still defaults this to false; state it so a major
+    // bump cannot turn the guard off without anyone noticing.
+    allowH2: false,
   });
 }
 
