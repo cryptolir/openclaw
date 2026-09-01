@@ -17,6 +17,7 @@ import {
 } from "./extension-relay.js";
 import {
   assertBrowserNavigationAllowed,
+  assertBrowserNavigationResultAllowed,
   InvalidBrowserNavigationUrlError,
   withBrowserNavigationPolicy,
 } from "./navigation-guard.js";
@@ -135,7 +136,7 @@ function createProfileContext(
       .filter((t) => Boolean(t.targetId));
   };
 
-  const openTab = async (url: string): Promise<BrowserTab> => {
+  const openTabUnchecked = async (url: string): Promise<BrowserTab> => {
     const ssrfPolicyOpts = withBrowserNavigationPolicy(state().resolved.ssrfPolicy);
     await assertBrowserNavigationAllowed({ url, ...ssrfPolicyOpts });
 
@@ -223,6 +224,23 @@ function createProfileContext(
       wsUrl: normalizeWsUrl(created.webSocketDebuggerUrl, profile.cdpUrl),
       type: created.type,
     };
+  };
+
+  // The browser follows redirects on its own, so the URL a tab landed on is not
+  // necessarily the one openTabUnchecked was asked for. Re-check it, and close
+  // the tab on failure so a later snapshot cannot read a disallowed page.
+  const openTab = async (url: string): Promise<BrowserTab> => {
+    const tab = await openTabUnchecked(url);
+    try {
+      await assertBrowserNavigationResultAllowed({
+        url: tab.url,
+        ...withBrowserNavigationPolicy(state().resolved.ssrfPolicy),
+      });
+    } catch (err) {
+      await closeTab(tab.targetId).catch(() => {});
+      throw err;
+    }
+    return tab;
   };
 
   const resolveRemoteHttpTimeout = (timeoutMs: number | undefined) => {
