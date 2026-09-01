@@ -74,11 +74,16 @@ describe("browser navigation guard", () => {
   });
 });
 
+type FakeRequest = {
+  url(): string;
+  redirectedFrom(): FakeRequest | null;
+};
+
 function createRequestChain(urls: string[]) {
   // urls oldest-first; Playwright exposes the newest request, walking back.
-  let current: { url(): string; redirectedFrom(): unknown } | null = null;
+  let current: FakeRequest | null = null;
   for (const url of urls) {
-    const previous = current;
+    const previous: FakeRequest | null = current;
     current = { url: () => url, redirectedFrom: () => previous };
   }
   return current as never;
