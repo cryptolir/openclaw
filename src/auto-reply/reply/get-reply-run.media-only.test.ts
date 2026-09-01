@@ -72,7 +72,7 @@ vi.mock("./session-updates.js", () => ({
     systemSent,
     skillsSnapshot: undefined,
   })),
-  prependSystemEvents: vi.fn().mockImplementation(async ({ prefixedBodyBase }) => prefixedBodyBase),
+  buildQueuedSystemPrompt: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("./typing-mode.js", () => ({
