@@ -20,16 +20,26 @@ describe("splitMediaFromOutput", () => {
     expect(result.text).toBe("");
   });
 
-  it("accepts tilde media paths", () => {
-    const result = splitMediaFromOutput("MEDIA:~/Pictures/My File.png");
-    expect(result.mediaUrls).toEqual(["~/Pictures/My File.png"]);
-    expect(result.text).toBe("");
+  it("rejects traversal and home-dir paths and strips them from output", () => {
+    const traversalCases = [
+      "MEDIA:../../../etc/passwd",
+      "MEDIA:../../.env",
+      "MEDIA:~/.ssh/id_rsa",
+      "MEDIA:~/Pictures/My File.png",
+      "MEDIA:./foo/../../../etc/shadow",
+    ];
+    for (const input of traversalCases) {
+      const result = splitMediaFromOutput(input);
+      expect(result.mediaUrls, `should reject media: ${input}`).toBeUndefined();
+      expect(result.text, `should strip from text: ${input}`).toBe("");
+    }
   });
 
-  it("accepts traversal-like media paths (validated at load time)", () => {
-    const result = splitMediaFromOutput("MEDIA:../../etc/passwd");
-    expect(result.mediaUrls).toEqual(["../../etc/passwd"]);
-    expect(result.text).toBe("");
+  it("does not accept a bare .. as media", () => {
+    // Not recognized as a path at all (no separator), so it stays in the text
+    // rather than being stripped -- but it must never become a media URL.
+    const result = splitMediaFromOutput("MEDIA:..");
+    expect(result.mediaUrls).toBeUndefined();
   });
 
   it("captures safe relative media paths", () => {
