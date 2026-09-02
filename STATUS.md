@@ -21,6 +21,59 @@
 
 ## Last Session
 
+- **Date**: 2026-09-01 → 09-02 (dashboard: hermes telegram card line — the surface C deferred and A2 never built; owner: Claude)
+- **Repo**: openclaw-dashboard. Four PRs, each squash-merged bound to its reviewed head, each deployed by CI:
+  - **#464** `feat(parity)`: the Telegram card on the hermes Config tab, under the A2 YAML editor. Same shape
+    as the openclaw card; different write path — token is ENV (`TELEGRAM_BOT_TOKEN`, never config.yaml),
+    access is the fail-closed `TELEGRAM_ALLOWED_USERS` allowlist. Reads `/channel-credentials` (token as a
+    boolean, never the value), writes `/secrets` (CAS-fenced merge), then `control restart`.
+  - **#465** `fix(secrets)`: a blank for a never-masked key is a **clear**, not a masked echo. Found on the
+    live walk: the secrets route dropped `""` from every caller except `platform_admin`, so an ordinary Org
+    owner emptying the allowlist got a success toast over an env that still authorized the old senders —
+    bot open while the UI said nobody. `isMaskedEchoBlank()` in `lib/docker-env.ts` at both drop sites;
+    `TELEGRAM_ALLOWED_USERS` joins `READABLE_KEYS` (identity list, already cleartext via
+    `/channel-credentials`). Token stays masked — pinned by test. **#467** (other session) then renamed the
+    two conflicting `canReveal` flags → `seesUnmaskedValues` / the Org rule; #469 (OB-50) touched the same
+    route after — verified #465's fix intact on main.
+  - **#468** `fix(parity)`: busy state. Every control is disabled for the whole save+restart, but the only
+    indicator was on the Save Token button — a ✕ click mid-restart was swallowed silently (hit it myself).
+    Amber `Applying…` pill in the card header + `opacity-50 pointer-events-none` + `aria-busy` on both sections.
+  - **#472**: the pill said `~30s`; measured **~130s** twice (re-gate + force-recreate + health wait). Now
+    "this can take a minute or two" — no number, it varies by agent.
+- **Why the gap existed**: #457 (C) shipped the backend and a one-paragraph note inside `ConfigTab`'s
+  capability-gated branch, deferring the card "to A2". #462 (A2) routed hermes to a NEW `HermesConfigTab`,
+  so the note stopped rendering and the card was never built. Both green. A deferral in a PR body is
+  invisible to CI — re-open the target phase's diff after it merges and grep for the deferred thing.
+- **Validation**: typecheck/tests/build clean on every PR (1672 → 1694 tests); `api-map` + `build-support-skill`
+  regenerated with no drift (no route changes). **Canary walked on hermes007 (EU) three times, hermi
+  untouched**: card reads the real `docker.env`; add `999000111` → `TELEGRAM_ALLOWED_USERS=999000111`
+  (sha `4542505e`); remove → `TELEGRAM_ALLOWED_USERS=` (sha `3f50855c`, the hash change IS the #465 proof);
+  hermes' own gateway log after restart: "No env user allowlists configured … will deny unknown". All 10
+  original keys survived every write. Pill confirmed on screen during a real restart; a click on the
+  Open radio mid-save was inert and visibly so.
+- **Left on the host, deliberately**: hermes007's env now carries an empty `TELEGRAM_ALLOWED_USERS=` line
+  where baseline had none. Behaviourally identical (deny-everyone; no bot token set). Not hand-removed —
+  the file header says the dashboard manages it. Remove through the dashboard if a pristine env matters.
+- **Worktrees**: all four (`wt-hermes-tg`, `wt-tg-clear`, `wt-tg-busy`, `wt-tg-copy`) removed; remote
+  branches deleted after verifying MERGED. Nothing of this line remains under `/root/AgentGlob_Apps/`.
+- **Next concrete steps** (carried forward from the 08-31 handover, re-verified 09-02):
+  1. `HERMES_GA` flip (Phase 6) — still `false` on main; one flag lifts wizard + server gates. **Owner
+     decision, never flip unasked.**
+  2. Reconcile scheduler job — one `gcloud` command in the key-rotation runbook (owner).
+  3. **#444** non-core secrets — OPEN, Rev 9, 8 reviews, untouched since 08-28; Codex out of review
+     credits since 08-26. Owner: top up or accept Rev 9, then Phases 1→2→3.
+  4. Hermes token streaming — pinned 0.20.4 has no streaming endpoint (measured). New image = register as
+     a hermes release, hermes007 first.
+  5. Salesforce hermes port (runtime-tools §9).
+  6. Cleanup: **#425** (superseded — close), **#426** (re-check), **#432** (owns deletion host cleanup;
+     `hrms002` dir still on 2ndClaw) — all still OPEN as of 09-02. `ANTHROPIC_API_KEY` deliberately unseeded.
+  7. **#449** Slack channel card still carries `writer-lock` — another session's; hands off.
+- **Gotchas added to memory this line**: (a) deferred work dies when its target is rewritten (above);
+  (b) a helper's _name_ is not its contract — `canReveal` meant `platform_admin` in one route and
+  `canRevealOrgSecrets()` (owner, NOT platform_admin) one file over; I wrote a confident security comment
+  off the wrong one and only a platform-admin account made the walk pass. Open the definition in the file
+  that calls it. (c) the Chrome `type` action never reached a React-controlled input — `form_input` did.
+
 - **Date**: 2026-08-23 (dashboard: core-key BYOK plan merged by owner call, owner: Claude)
 - **Repo**: openclaw-dashboard, branch `plan/core-key-byok`, PR #430 squash-merged as `3995810`
 - **What landed**: `docs/plans/core-key-byok.md` ONLY. No implementation code exists for this plan
