@@ -13,13 +13,13 @@
 
 | Repo               | Branch                            | PR   | Status    | Owner  | Files / Areas Touched                                                   | Validation                                            | Next Concrete Step                                              | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | ------------------ | --------------------------------- | ---- | --------- | ------ | ----------------------------------------------------------------------- | ----------------------------------------------------- | --------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| openclaw-dashboard | fix/ob51-config-route-door | #479 | in review | Claude | app/api/agents/[agentId]/config/route.ts, app/api/community/groups/[id]/apply/route.ts, lib/agent-server.test.ts, docs/ops/bug_list.md | tsc clean, 1706 tests 0 fail, build exit 0, both new tests fail against main | owner merge | OB-51: both routes fell back to the host-global openclaw.json on a bare `test -f`, behind `write_agents`. Fallback removed: legacy agent → 400 before SSH, missing file → the control route's 409, no arm names the host-global path. Source sweep over app/api/agents + app/api/community pins it. Prod probe (read-only): 1stClaw has ONE dir without openclaw.json (`main` — no docker.env, nothing running), 2ndClaw none. |
+| openclaw-dashboard | fix/ob51-config-route-door | #479 | merged | Claude | app/api/agents/[agentId]/config/route.ts, app/api/community/groups/[id]/apply/route.ts, lib/agent-server.test.ts, docs/ops/bug_list.md | tsc clean, 1706 tests 0 fail, build exit 0, both new tests fail against main | move OB-51 to Resolved in bug_list.md | OB-51: both routes fell back to the host-global openclaw.json on a bare `test -f`, behind `write_agents`. Fallback removed: legacy agent → 400 before SSH, missing file → the control route's 409, no arm names the host-global path. Source sweep over app/api/agents + app/api/community pins it. Prod probe (read-only): 1stClaw has ONE dir without openclaw.json (`main` — no docker.env, nothing running), 2ndClaw none. |
 
 ---
 
 ## Last Session
 
-- **Date**: 2026-09-02 (dashboard: OB-51 config-route door closed, PR #479 open, owner: Claude)
+- **Date**: 2026-09-02 (dashboard: OB-51 config-route door closed, PR #479 merged + deployed, owner: Claude)
 - **Repo**: openclaw-dashboard, branch `fix/ob51-config-route-door`, worktree `/root/AgentGlob_Apps/wt-ob51-route`
 - **What changed**: `GET|POST /api/agents/[agentId]/config` and `POST /api/community/groups/[id]/apply`
   (the "unaudited" route in the entry — same three lines, same bug) fell back to the host-global
@@ -32,7 +32,10 @@
 - **Validation**: `npx tsc --noEmit` clean; `npm test` 1706 pass / 0 fail / 1 skipped (endpoint-map
   and support-skill drift tests included); `npm run build` exit 0. Not visually verified — needs an
   agent with no `openclaw.json`; the agent page renders `data.error` on that fetch already.
-- **Next concrete step**: owner merge #479; then move OB-51 to Resolved in `bug_list.md`.
+- **Shipped**: #479 squash-merged as `d1589a3` 2026-09-02 11:12Z, re-tested on the merged tree first
+  (#480 had landed under it: tsc clean, 1707 pass / 0 fail). Deploy run 33623440064 green, tag
+  `v2026.9.2.4`, Cloud Run revision `openclaw-dashboard-00516-4f9` at 100% traffic from 11:24Z.
+- **Next concrete step**: move OB-51 to Resolved in `bug_list.md`.
 - **Housekeeping**: dropped the #429 and #131 rows from Active Branches — both merged 2026-08-22.
   A stray worktree `/root/AgentGlob_Apps/wt-ob51-fix` [`fix/ob51-config-host-global`] sits at
   main with no commits, no remote branch and no PR, created 09:29Z 2026-09-02 by another session.
