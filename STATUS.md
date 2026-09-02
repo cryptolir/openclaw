@@ -51,9 +51,22 @@
   hermes' own gateway log after restart: "No env user allowlists configured … will deny unknown". All 10
   original keys survived every write. Pill confirmed on screen during a real restart; a click on the
   Open radio mid-save was inert and visibly so.
-- **Left on the host, deliberately**: hermes007's env now carries an empty `TELEGRAM_ALLOWED_USERS=` line
-  where baseline had none. Behaviourally identical (deny-everyone; no bot token set). Not hand-removed —
-  the file header says the dashboard manages it. Remove through the dashboard if a pristine env matters.
+- **RESOLVED 09-02 (#484)**: that leftover empty `TELEGRAM_ALLOWED_USERS=` line is gone; hermes007's
+  `docker.env` is byte-identical to its pre-session baseline (sha `8e75f783`, 10 keys, header intact).
+  Removing it exposed a bigger gap — **the dashboard had no delete path for a secret at all**. The ✕
+  calls `removeEntry()`, which only drops the row from React state; `saveSecrets()` posts truthy entries
+  only, so a removed key is merely ABSENT; and `applySave()` merges, preserving anything the payload does
+  not name. Proven on hermes007 first: ✕ + Save returned "Secrets saved. Restart the bot to apply." with
+  the file unchanged (sha `3f50855c`, 11 keys, line still there). Third silent no-op of this shape after
+  #465 and #468 — a UI reporting a write the route never performed.
+  **#484** adds `removeKeys` to the POST, `applyEnvRemovals()` in `docker-env.ts` before the merge
+  (comments always survive; removing an absent key is a no-op so two tabs cannot fail each other), and
+  fails closed on `WALLET_PRIVATE_KEY` (rotation is fenced in that same route), core keys (refused, with
+  a pointer to Reset to default) and the existing `GMAIL_*`/`GCAL_*`/`SALESFORCE_*` reservation.
+  1714 pass, typecheck + build clean. Deployed vbuild 518, then used through the UI to do the removal.
+  **Note**: hermes007's _running container_ still carries the stale empty var from an earlier restart —
+  inert (empty = deny-everyone, and no bot token is set), and it clears on its next restart. Not restarted
+  for this; the file is what deploys read.
 - **Worktrees**: all four (`wt-hermes-tg`, `wt-tg-clear`, `wt-tg-busy`, `wt-tg-copy`) removed; remote
   branches deleted after verifying MERGED. Nothing of this line remains under `/root/AgentGlob_Apps/`.
 - **Next concrete steps** (carried forward from the 08-31 handover, re-verified 09-02):
