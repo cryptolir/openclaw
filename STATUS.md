@@ -434,3 +434,173 @@ value` from 2026-08-08 09:42. Use `NO_COLOR=1`, widen past 200 columns, and asse
 - Always resolve agent server from Firestore before SSH/RPC — never hardcode EU
 - Always use `getAllDashboardOrigins()` not `getDashboardOrigin()` for allowedOrigins
 - Canonical terms: Agent = full deployment, Bot = channel inside Agent, Org = dashboard unit, Workspace = per-Agent local dir on Hetzner
+
+---
+
+## Recovered session history (2026-08-26 → 2026-08-30)
+
+These entries were written during the sessions that shipped
+openclaw-dashboard#451–openclaw-dashboard#457 but were never committed. They sat
+as an uncommitted `STATUS.md` edit on the DevAgents checkout and were parked in a
+stash on 2026-09-01 to unblock the `v2026.9.1.1` build. Recovered here as history
+— the newer `Last Session` block above is left untouched, so this section is
+deliberately older than the top of the file.
+
+PR numbers are qualified as `openclaw-dashboard#NNN`. This repo tops out at about
+`#143`, so a bare `#451` here would render as a dead link to a gateway PR that
+does not exist.
+
+- **Date**: 2026-08-26 (dashboard: core-key parity + non-core secrets sweep, owner: Claude)
+- **Merged today**: openclaw-dashboard#388 (per-agent-only key fence, by shape), openclaw-dashboard#438 (hermes core-key parity D1/D2 + owner gate, core-key-byok Phase 1), openclaw-dashboard#443 (ANTHROPIC_API_KEY joins the Core API list — owner chose to keep the host value EMPTY, slot exists, no key seeded), openclaw-dashboard#444's Phase 0 unblocked by openclaw-dashboard#388.
+- **In review**: openclaw-dashboard#444 (plan: non-core secrets — fence, host cleanup, fleet migration). 7 Codex rounds folded (Rev 8 at head 21321fe), converged 4→3→3→2→1→4→1 with an owner-directed Rev 7 simplification (no digest store; strip-before-cleanup; host-file-only stateless daily scan). Standing owner authorization: fold to clean, escalate only on new obligations/divergence/approval. BLOCKED at round 8 on Codex usage limits — hourly re-request retries armed.
+- **Owner rulings recorded on openclaw-dashboard#444**: fence provision-agent.sh in the gateway repo (Phase 1 deliverable); natural restarts (no forced wave); no durable convergence store (ephemeral in-run verification + stateless daily scan); deliberate re-adds out of scope.
+- **Superseded direction**: openclaw-dashboard#425's C15 per-runtime HERMES_VENICE_API_KEY rename — owner reviewed and rejected the per-runtime axis (2026-08-24): single shared core keys + provider-side caps + per-agent isolation (quarantine/BYOK) instead. openclaw-dashboard#425 still open and needs a superseding Rev or closure.
+- **Still open**: openclaw-dashboard#426 (venice-byok plan, round-4 escalation unresolved); openclaw-dashboard#444 implementation Phases 1-3 after approval; ANTHROPIC_API_KEY host seeding deliberately deferred (owner keeps it empty for now).
+
+### Previous session
+
+
+## 2026-08-28 — default model fixed, parity plan merged, round-8/round-6 folds, A1a shipped (Claude session)
+- **openclaw-dashboard#451 MERGED**: platform default -> `nvidia/nemotron-3.5-lightning` (PAID, $0.10/$0.25 per M). Owner decision: the :free ultra shipped in openclaw-dashboard#448 is account-metered by OpenRouter (50 req/day fleet-wide, measured exhausted same day). Serving verified by live completion BEFORE merge this time. The :free ref stays catalog-resolvable + public-chat-accepted (never advertised) until redeploys rewrite 2026-08-27 primaries. hermi NOT redeployed (only live hermes agent — owner OK needed).
+- **openclaw-dashboard#404 MERGED at Rev 15** (round 6 = 1 finding, folded: openclaw no-selection public sends actively reset to the configured primary — never skip /model; OD-3 marked superseded by openclaw-dashboard#451). Owner decision recorded on the PR. Build order live: **A1a -> A0+P18 -> E -> A3/A4 -> C -> D -> A2**.
+- **openclaw-dashboard#444 Rev 9 pushed** (hand-written; bot fold run had crashed): final pass matches name+VALUE via host values read into process memory before cleanup (R8-F1), and verifies + recreates LIVE containers, not just files (R8-F2). Both threads resolved; writer-lock released; round 9 auto-triggers under the standing round-7+ authorization.
+- **openclaw-dashboard#452 OPEN (A1a)**: hermes secrets with no per-agent env file refuse 400 — never GLOBAL_ENV_PATH (P7), one decision point `resolveSecretsEnvPath()` + the owed §4 missing-file test. CI running; awaiting owner merge word.
+- Hosting note: EU (1stClaw) has ZERO hermes containers — provision-hermes-host.sh (§8.4) is the gap before hermes can deploy there. US (2ndClaw) runs the sole hermes agent hermi.
+
+### 2026-08-28 later — hermi redeploy ATTEMPTED, ROLLED BACK: the OpenRouter account is out of credits
+- **openclaw-dashboard#452 MERGED** (A1a / P7). Main = 789b572.
+- **hermi redeploy: config path VERIFIED, model call FAILED, rolled back.** New config.yaml (`provider: openrouter`, `model: nvidia/nemotron-3.5-lightning`, no base_url) wrote cleanly and hermes routed to it exactly as designed (`runtime: {provider: openrouter, model: nvidia/nemotron-3.5-lightning, route_source: global}`). The CHAT then returned HTTP 402: "requires more credits... requested up to 65536 tokens, can only afford 58512".
+- **ROOT CAUSE — the OpenRouter account has no credit left**: `/api/v1/credits` = total_credits 5, total_usage 5.1415. This single fact explains BOTH failures: `:free` refs hit the 50/day free-tier cap (lifts only with credits), and PAID refs 402 because OpenRouter pre-authorizes the FULL max_tokens and hermes requests 65536.
+- **Verification lesson (my error, twice): a max_tokens=20 curl proves the MODEL serves, not that the ACCOUNT can fund a real agent request.** Verify at the workload's real max_tokens.
+- **ROLLED BACK**: hermi restored to `claude-sonnet-5` / `provider: custom` / Venice base_url (backup `/root/.hermes/agents/hermi/backups/config.yaml.2026-08-28.bak`, sha e8b047434448cf46 — byte-identical restore), container recreated, **verified serving** (200, "SERVING"), secrets containment intact.
+- **VENICE IS HEALTHY**: balance DIEM 12.478 (USD ~0 — DIEM is what pays); `claude-sonnet-5` AND `deepseek-v4-flash` both serve at max_tokens 65536.
+- **LIVE ISSUE**: openclaw-dashboard#451 is merged+deployed, so every NEW agent deploy (both runtimes) now injects an OpenRouter default that 402s. Fix = revert default to `venice/deepseek-v4-flash` (pre-#448, verified serving) OR fund OpenRouter. OWNER DECISION PENDING.
+- **openclaw-dashboard#453 MERGED — platform default reverted to Venice.** `PLATFORM_DEFAULT_MODEL` = `venice/deepseek-v4-flash`; hermes back to `claude-sonnet-5` / `provider: custom` / Venice base_url. `buildConfig()` output is byte-identical to hermi's live verified-serving config (sha e8b047434448cf46), so hermi needs NO redeploy — it already matches. Both nemotron refs stay defined+accepted (nothing pinned to them breaks) but are advertised nowhere. No agent was deployed in the broken window (12:02–13:0xZ) — nothing to repair.
+- **New regression pin** (`lib/default-model-coherence.test.ts`): the forced default may not be an `openrouter` ref; the failure message names the check (`/api/v1/credits`) and the workload size (`max_tokens 65536`) that a token-sized probe missed twice. Deliberately editable — fund the account, verify at 65536, update the test in the same PR.
+- **To re-enable OpenRouter later**: add credits, then a $5 balance also lifts `:free` refs to 1000 req/day, making the owner's original free-Nemotron choice viable.
+
+### 2026-08-30 — openclaw-dashboard#454 (A0+P18) and openclaw-dashboard#455 (E) merged; EU provisioning re-measured (Claude session)
+- **openclaw-dashboard#454 MERGED (A0+P18)**: fleet-global name claim in createAgent's transaction (covers create+import), owner-checked release in deleteAgent, all 11 public first-match lookups replaced with the shared resolver (ambiguous name -> 409), user-file routes refuse non-openclaw agents at all FOUR handler entry points before any SSH.
+- **openclaw-dashboard#455 MERGED (E)**: releases runtime-scoped (legacy docs read as openclaw); stable unique PER runtime; promoteRelease is one transaction archiving same-runtime priors only; per-agent upgrade route descriptor-driven (imageEnvVar, dockerEnvPath, composePrefix, per-runtime health probe) with P10 checks at both resolution points; pull moved BEFORE the env write (a failed pull used to leave docker.env poisoned); **platform fleet walk gained the runtime filter it was missing — it was live-eligible to "upgrade" hermi with openclaw machinery**; upgrade flips hermes:true (gate+row kept, P21). A hermes upgrade 404s until a hermes release is registered (register route now takes runtime + explicit image for hermes).
+- **EU (1stClaw) provisioning CORRECTION**: earlier session claim "EU was never hermes-provisioned" was WRONG. Measured 2026-08-30: /opt/hermes/docker-compose.yml present since Aug 20 AND hermes-agent:v1 image present. Host compose vs script: **functionally byte-identical; header comments only** differ (both hosts predate a comment-only script rewording). EU merely has zero hermes agents (/root/.hermes absent — created on first deploy). Remaining EU step: deploy a scratch hermes agent via the dashboard (owner action or owner OK); optional: re-run provision-hermes-host.sh on both hosts to sync the comment header.
+
+### 2026-08-30 later — hermes007 EU canary verified; A3/A4 shipped (openclaw-dashboard#456)
+- **hermes007 deployed by owner on 1stClaw (EU), verified end-to-end**: container up (hermes-agent:v1); config byte-identical to hermi's verified pin (sha e8b0474344); real chat 200/"SERVING" via claude-sonnet-5/Venice; NO env file visible anywhere in the container (allowlisted interpolation only); zero openclaw-dashboard#388-fenced keys in the agent env; ANTHROPIC_API_KEY present-but-empty in the container via compose default (flows automatically once the host key is seeded + redeploy). First hermes agent serving from EU; hermi is no longer a fleet of one.
+- **openclaw-dashboard#456 MERGED (A3+A4)**: descriptor soulPath (openclaw workspace/SOUL.md; hermes home-root SOUL.md, in-mount); soul GET/POST + supercharge write + backup read all descriptor-driven; oracle consult + cooldown untouched; soul writes chown 1000:1000. Backup keeps the four-file projection (P8) with comment-stripped source pins (four addFile calls; addLocalFolder/tar/find/sessions can never enter the route unnoticed). soul + backup flip hermes:true, gates + rows kept (P21). 1616 tests.
+- Parity order state: A1a ✓ (openclaw-dashboard#452) → A0+P18 ✓ (openclaw-dashboard#454) → E ✓ (openclaw-dashboard#455) → **A3/A4 ✓ (openclaw-dashboard#456)** → next C (telegram, openclaw-dashboard#337 Phase 5) → D (public chat) → A2 (config; still blocked on openclaw-dashboard#419 implementation).
+- Verification owed on the canary: owner saves a soul via the dashboard tab on hermes007 → check /root/.hermes/agents/hermes007/home/SOUL.md exists, uid 1000; download a backup → confirm 4 files, masked env, no sessions.
+
+### 2026-08-30 later — C shipped (openclaw-dashboard#457): hermes telegram channel
+- **openclaw-dashboard#457 MERGED (C)**: measured from pinned hermes source — TELEGRAM_BOT_TOKEN is ENV (never config.yaml; custody rule), TELEGRAM_ALLOWED_USERS is a fail-closed CSV allowlist (empty=deny, *=all). Both ride the per-agent docker.env via the Secrets tab. provision-hermes-host.sh gains the two compose passthrough vars (class d). channel-credentials answers hermes from the per-agent env (ids + tokenSet boolean, value never leaves host); pairing/resend/admins refuse hermes explicitly before SSH. telegram flips hermes:true; coupling test pins flip↔compose. Named deviation: the Phase-0 "token via hermes config" guess was wrong — measured env mechanism used instead.
+- **PENDING OWNER OK (class d, §8.4)**: re-run provision-hermes-host.sh on 1stClaw + 2ndClaw so the vars reach containers. Both hosts' compose pre-backed-up as /opt/hermes/docker-compose.yml.pre-telegram.bak (sha 1654f8385940 both). Until re-run, the flip is honest-but-inert. Existing containers unaffected until their next recreate.
+- Parity order: A1a ✓ → A0+P18 ✓ → E ✓ → A3/A4 ✓ → **C ✓ (openclaw-dashboard#457)** → D (public chat) → A2 (config, blocked on openclaw-dashboard#419 impl).
+- **PROVISIONED (owner OK 2026-08-30)**: provision-hermes-host.sh re-run on BOTH hosts. Compose files now identical (sha cecf67df634cb5cd), both carry the two telegram passthrough vars, dry `docker compose config` parses and interpolates cleanly (empty values until keys are set). Live agents untouched (hermes007, hermi). Backups remain at /opt/hermes/docker-compose.yml.pre-telegram.bak on both hosts. Hermes telegram is now fully live end to end: Secrets tab (2 keys) + restart = bot online, deny-by-default.
+
+### 2026-08-30 later — D shipped (openclaw-dashboard#458) and LIVE-VERIFIED: hermes public chat works
+- **openclaw-dashboard#458 MERGED (D)**: every public chat op (send buffered+SSE, abort, threads, history, models, authenticateMember) dispatches via publicChatTarget -> runtime descriptor with the Invariant-2 credential. Model policy in resolveModelSwitch: hermes NEVER gets /model (C4 discard; models route advertises only config.yaml's default); openclaw keeps F5b + gains the Rev 15 OD-2 active reset (no selection -> configured primary via the same reader the models route uses). P14: hermes attachments 400 explicitly. P15/P22 scan test walks app/api/public and fails on unclassified routes (20 classified: 6 dispatch / 3 refuse / 2 guarded-shared / 5 store-only / 4 agentless); bot-member-gateway-sync RPC helpers carry runtime guards. authenticateMember also lost its first-match lookup (the P18 straggler openclaw-dashboard#454's route-only sweep missed). public-chat flips hermes:true. NAMED DEVIATION: hermes chatStream = single final delta (pinned hermes API has no chat streaming endpoint); token-level SSE follow-up needs live delta fixtures.
+- **LIVE-VERIFIED on production (app.agentglob.com, hermes007/EU)**: agent card 200; models route = single "claude-sonnet-5"; chat WITH body.model=claude-opus-4.8 -> 200 "SERVING" (discarded, served the config default — C4 measured live); attachment send -> 400 with the P14 message. Verified at the real surface, not a probe.
+- Parity: A1a ✓ A0+P18 ✓ E ✓ A3/A4 ✓ C ✓ **D ✓ (openclaw-dashboard#458)**. Remaining: A2 (config tab — blocked on openclaw-dashboard#419's unbuilt C1/C3 gates), hermes SSE follow-up, Salesforce port (B-remainder), Phase 6 GA flag.
+
+### 2026-08-30 later — openclaw-dashboard#419 Phase 0+1 shipped (openclaw-dashboard#459): the hermes model gate exists
+- **openclaw-dashboard#459 MERGED**: Phase 0 — scripts/extract-hermes-model-paths.py AST-walks the pinned v37 schema; committed artifact lib/agent-runtime/hermes-model-paths.ts (22 tuple sections incl 18 auxiliary sub-agents, 22 scalars, 10 catalogs). Schema surprise handled: top-level `model` is a plain STRING in the schema, mapping in our estate — both shapes gate; a bare string = provider inference (P20) and re-gates. Phase 1 — pure gateHermesConfigDoc: C9 tuple authorization (fail closed on unknown routes, always on `auto`); disallowed main model re-gated to entitled default; aux/scalar/catalog stripped to schema defaults; wired into the MCP writer (C1, injectable owner-plan loader C7) and deploy (C6 loud drift assert); C5 drift guard on HERMES_CONFIG_VERSION. Constants moved to leaf hermes-model-route.ts (broke a real hermes<->tools cycle). 1646 tests.
+- **A2 remains blocked by C2**: Phase 2 (downgrade inline apply + start/restart re-gate + daily reconcile + regateFailingSince/quarantinedFromKeys escalation + key-rotation runbook) must land first — or A2+Phase2 ship in one release. That is the next big build.
+
+### 2026-08-30 later — openclaw-dashboard#419 Phase 2 shipped (openclaw-dashboard#460 + openclaw-dashboard#461): A2 IS UNBLOCKED
+- **openclaw-dashboard#460 MERGED (Phase 2)**: one engine regateHermesAgent (owner-plan re-read, gate, rewrite+restart, confirm — under the deploy lock with a post-write workspace updateTime CAS, C14) wired into four surfaces: plan-route inline downgrade apply (C3; Stripe webhook stays store-only), control start/restart before compose (C8), stateless daily reconcile GET /api/cron/hermes-regate (C11), audited quarantine clear on the agent PATCH route (C12 recovery, re-gate-first, audit agent.key_quarantine_cleared). Escalation: regateFailingSince → 48h window (pure, regate-core.ts) → quarantinedFromKeys; both fields immutable to generic updates + withheld from the serialized payload; quarantine denies ALL key-distribution paths (deploy core-key merge, deploy-time Org secrets, sync propagation via shared partition) independent of excludeFromOrgSecrets (C13). State-based P1 email + docs/ops/hermes-key-rotation-runbook.md (old-key→401 step). Named deviation: P1 rides the dashboard cron family, not the host diagnostic (no Firestore on hosts). 1656 tests.
+- **PROCESS MISS, owned**: openclaw-dashboard#460's terminology check FAILED (new route, no TERMINOLOGY.md entry) but my merge guard piped `gh pr checks --watch` through `tail`, masking the exit code — the merge landed on a red check. Fixed forward in **openclaw-dashboard#461 MERGED** (Re-gate + Key quarantine defined; check green) and all merge chains now run under pipefail with the check's own exit code guarded.
+- **C2 SATISFIED: parity A2 (hermes config tab) is UNBLOCKED** — Phases 1 (openclaw-dashboard#459) + 2 (openclaw-dashboard#460) both landed.
+- **OWNER STEP**: create the reconcile scheduler job (documented in the runbook): gcloud scheduler jobs create http hermes-regate --schedule="50 5 * * *" --uri=.../api/cron/hermes-regate --headers="Authorization=Bearer $CRON_SECRET". Until then convergence = deploy/start re-gates + the plan-route inline apply (the reconcile route works when called; it is just not yet called daily).
+
+### 2026-08-31 — A2 shipped (openclaw-dashboard#462): THE HERMES PARITY GAP LIST IS EMPTY
+- **openclaw-dashboard#462 MERGED (A2, the final parity phase)**: same Configuration tab (P6), format per runtime — openclaw's rich JSON editor untouched; hermes gets a validated YAML text editor (HermesConfigTab, call-site branch). Pure save validator (P5 before any SSH: malformed/multi-doc/non-mapping/stampless → 400; P20 auto refused with its own message; openclaw-dashboard#419 gate REFUSES a disallowed save — editor contract: never silently rewrite; convergence surfaces rewrite). Write under the deploy lock + in-lock plan re-read + post-write updateTime CAS (C14; cross-write plan change re-gates the written doc). GET = raw YAML via descriptor, never the shared openclaw.json (P2). verify-model + capability flags refuse hermes explicitly. config flips hermes:true. 1665 tests.
+- **All sixteen original hermes gap-list capabilities are now supported or deliberately out of scope** (wallet/rain/hyperliquid per P4; salesforce per its own plan §9). Live verification path: open hermes007 -> Configuration -> YAML editor; save restarts + re-gates.
+- Remaining estate loose ends: Phase 6 GA flag (HERMES_GA — owner decision when ready to let ordinary Orgs create hermes agents); reconcile scheduler job (owner, runbook has the command); hermes token-streaming follow-up; Salesforce hermes port; openclaw-dashboard#444 awaiting review (Codex credits); openclaw-dashboard#425 superseded (close), openclaw-dashboard#426 re-check.
+
+## HANDOVER — continuing the hermes / openclaw-dashboard#404 line (written 2026-08-31, session end)
+
+Read this after the `agentglob-session-start` orientation block. It is the
+single continuation point for the hermes parity work.
+
+### Where things stand
+
+**openclaw-dashboard#404 (hermes-feature-parity) is MERGED and FULLY BUILT.** All seven phases
+shipped and live, in order: A1a openclaw-dashboard#452 → A0+P18 openclaw-dashboard#454 → E openclaw-dashboard#455 → A3/A4 openclaw-dashboard#456 →
+C openclaw-dashboard#457 → D openclaw-dashboard#458 → A2 openclaw-dashboard#462. The openclaw-dashboard#419 credential plan it depended on is also
+fully built: Phase 0+1 openclaw-dashboard#459 (schema-enumerated model gate), Phase 2 openclaw-dashboard#460
+(downgrade re-gate, start backstop, daily reconcile, key quarantine), plus
+the openclaw-dashboard#461 terminology entry. The hermes gap list is EMPTY — every capability
+is supported or deliberately out of scope (wallet/rain/hyperliquid per P4;
+salesforce per its own plan §9).
+
+**Live fleet**: hermi (2ndClaw/US) and hermes007 (1stClaw/EU — the canary;
+owner-verified the A2 YAML editor renders there). Both serve
+claude-sonnet-5 via the explicit Venice pin. Platform default =
+venice/deepseek-v4-flash (openclaw-dashboard#453) — the OpenRouter account is UNFUNDED (free
+429s account-wide, paid 402s at max_tokens 65536); a coherence test refuses
+an openrouter default until someone funds the account and verifies at the
+real workload size.
+
+### Key modules this line created (all under the dashboard repo)
+
+- lib/agent-identity.ts — P18 unique resolution + fleet-global name claim
+  (in createAgent/deleteAgent transactions); A0 user-file refusals.
+- lib/agent-runtime/hermes-model-{paths,route,gate}.ts + hermes-config-save.ts
+  — the openclaw-dashboard#419 gate: committed v37 schema enumeration (regenerate with
+  scripts/extract-hermes-model-paths.py against /root/AgentGlob_Apps/hermes-agent),
+  C9 tuple authorization, P20 never-auto, the pure A2 save validator.
+- lib/hermes-regate.ts + lib/agent-runtime/regate-core.ts — the re-gate
+  engine (deploy lock + owner-plan re-read + post-write updateTime CAS) and
+  the 48h quarantine window. Wired into: plan-route downgrade apply,
+  control start/restart, GET /api/cron/hermes-regate, the audited
+  quarantine clear on the agent PATCH route.
+- lib/public-chat-runtime.ts — D's dispatch seam (publicChatTarget,
+  resolveModelSwitch: hermes never gets /model; openclaw OD-2 active reset).
+- lib/agent-runtime/hermes-telegram.ts — C's env-based channel
+  (TELEGRAM_BOT_TOKEN + fail-closed TELEGRAM_ALLOWED_USERS via Secrets tab;
+  compose passthrough re-provisioned on BOTH hosts 2026-08-30).
+
+### Follow-ups, in suggested order
+
+1. **HERMES_GA (Phase 6, docs/plans/hermes-runtime-support.md §6)** — flip
+   the single flag in lib/agent-runtime/capabilities.ts, which lifts the
+   wizard isPlatform condition AND the POST /api/agents role gate together;
+   the §4 GA test toggles it. OWNER DECISION — do not flip unasked.
+2. **Reconcile scheduler job (owner)** — the route exists and works; the
+   daily call does not. gcloud command in
+   docs/ops/hermes-key-rotation-runbook.md. Until then convergence =
+   deploy/start re-gates + plan-route inline apply.
+3. **openclaw-dashboard#444 (non-core-secrets)** — Rev 9 pushed, 0 open threads, but the Rev
+   is UNREVIEWED: Codex ran out of review credits 2026-08-26. Owner either
+   tops up Codex or owner-accepts Rev 9. After merge: Phase 1 build (host
+   prefix fence + named-empty wallet slot), Phase 2 host cleanup (OWNER,
+   values touched), Phase 3 sha-guarded fleet sweep (final pass matches
+   name+VALUE via in-memory host values and verifies LIVE containers).
+4. **Hermes token streaming** — named deviation in openclaw-dashboard#458: chatStream emits
+   one final delta; the pinned 0.20.4 API has no chat-streaming endpoint
+   (measured). Needs either an upstream endpoint (new image tag → register
+   as a hermes RELEASE via the runtime-scoped store, then upgrade hermes007
+   FIRST — E gives rollback) or live-recorded delta fixtures.
+5. **Salesforce hermes port** — runtime-tools plan §9; catalog shipped,
+   port not built.
+6. **Cleanup**: close openclaw-dashboard#425 (superseded by shared-core-keys ruling);
+   re-check openclaw-dashboard#426 (Venice BYOK) against the post-#453 default; openclaw-dashboard#432 owns the
+   hermes host-artifact deletion cleanup (hrms002's dir still sits on
+   2ndClaw — evidence); ANTHROPIC_API_KEY still deliberately unseeded on
+   both hosts (owner).
+
+### Hard-won gotchas (memory has the full versions)
+
+- Verify at the REAL workload size (a max_tokens=20 probe passed while the
+  65536-token request 402d) and check the provider ACCOUNT, not the price page.
+- Guard on `gh pr checks`' own exit code — `| tail` masked a red check once
+  and a merge landed on it. Use `if gh pr checks …; then merge; fi`.
+- The node test runner needs explicit .ts extensions on relative lib imports,
+  and lib/firestore cannot load under it — lazy-import workspace-store et al
+  from any module the tests reach (see loadOwnerPlanModels for the pattern).
+- A NEW route or skill fails the terminology check without a TERMINOLOGY.md
+  entry (or the terminology-exempt label) in the same PR.
+- ENDPOINT_MAP.md + assets/skills/support/SKILL.md are generated — route or
+  capability changes must re-run scripts/api-map.mts and
+  scripts/build-support-skill.mts in the same PR.
+- Canary discipline: try hermes changes on hermes007 (EU) first, never
+  hermi-first. Scope claims need a second reader — count the files.
