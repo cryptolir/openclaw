@@ -628,7 +628,7 @@ First alert counts once enabled: dashboard **98** (5 critical, 54 high), gateway
 ### Dashboard — shipped and on prod (Cloud Run revision `openclaw-dashboard-00531-n9h`)
 
 - **openclaw-dashboard#506** — `next-auth` 5.0.0-beta.30 → beta.32, `@auth/core` → 0.41.3. The two criticals, both in the login layer: malformed `Bearer` now yields `null` (middleware sends `/login` instead of a 500 — verified on prod with a bad header), OAuth check cookies bound to their provider, NFKC email normalisation. Build exit 0, 1733/1734 tests (same as main).
-- **openclaw-dashboard#507** — `npm audit fix --omit=dev` (no majors) + `js-yaml` 4.1.1 → 4.3.2. `next` 15.5.12 → 15.5.25, `protobufjs`, `websocket-driver`, `ws` (via `ethers`/`viem`), `lodash`, `sharp`, `nanoid`, `socket.io-parser`, `fast-xml-*`, `form-data`, `@grpc/grpc-js`; `node-forge` dropped from the tree. `npm audit --omit=dev` 31 → 11 (0 critical). Dependabot auto-closed its superseded #500/#501/#503/#505.
+- **openclaw-dashboard#507** — `npm audit fix --omit=dev` (no majors) + `js-yaml` 4.1.1 → 4.3.2. `next` 15.5.12 → 15.5.25, `protobufjs`, `websocket-driver`, `ws` (via `ethers`/`viem`), `lodash`, `sharp`, `nanoid`, `socket.io-parser`, `fast-xml-*`, `form-data`, `@grpc/grpc-js`; `node-forge` dropped from the tree. `npm audit --omit=dev` 31 → 11 (0 critical). Dependabot auto-closed its superseded openclaw-dashboard#500/#501/#503/#505.
 - Alerts after: 98 → **25** (0 critical). Remaining highs: `adm-zip` (needs 0.6.0, semver-major, direct dep) and `postcss` (only fixable by `next` 16) — both **deliberately skipped: majors need code work**; the rest are dev-only (`brace-expansion`, `browserslist`, `picomatch`, `flatted`).
 - Not verified by me: a real Google sign-in on prod (needs a browser + the owner's account). Owner to click through `/dashboard/platform` once.
 
@@ -650,5 +650,5 @@ First alert counts once enabled: dashboard **98** (5 critical, 54 high), gateway
 ### Follow-ups (not started, unclaimed)
 
 - openclaw: `protobufjs` override → 7.6.5 (one line, clears a critical); `baileys` rc12; then the next-to-reachable set (`ws`, `axios`, `sharp`, `hono`, `minimatch`, `form-data`).
-- openclaw-dashboard: `adm-zip` 0.6.0 and `next` 16 are code changes, not bumps. Dependabot's 3 open dev-dep PRs (#502, #504, #508) can be batched with the next weekly run.
+- openclaw-dashboard: `adm-zip` 0.6.0 and `next` 16 are code changes, not bumps. Dependabot's 3 open dev-dep PRs (openclaw-dashboard#502, #504, #508) can be batched with the next weekly run.
 - deploy.sh: add `chmod +x` or document `bash`; consider promoting from `deploy.sh` itself once both hosts are rolled, so stable can no longer lag the fleet.
