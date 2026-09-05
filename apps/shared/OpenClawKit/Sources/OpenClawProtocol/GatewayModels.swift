@@ -2790,6 +2790,23 @@ public struct ChatAbortParams: Codable, Sendable {
     }
 }
 
+public struct ChatResultParams: Codable, Sendable {
+    public let sessionkey: String
+    public let runid: String
+
+    public init(
+        sessionkey: String,
+        runid: String
+    ) {
+        self.sessionkey = sessionkey
+        self.runid = runid
+    }
+    private enum CodingKeys: String, CodingKey {
+        case sessionkey = "sessionKey"
+        case runid = "runId"
+    }
+}
+
 public struct ChatInjectParams: Codable, Sendable {
     public let sessionkey: String
     public let message: String
