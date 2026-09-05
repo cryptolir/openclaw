@@ -60,9 +60,11 @@ services:
       AIRTABLE_REVIEWS_BASE_ID: ${AIRTABLE_REVIEWS_BASE_ID:-}
       OUTREACH_ROLE: ${OUTREACH_ROLE:-}
       HUBSPOT_TOKEN: ${HUBSPOT_TOKEN:-}
-      # EXA_API is the scout's company finder (exa-search skill). Read-only: the script it backs
-      # has one hardcoded endpoint and no verb that writes or looks a person up.
-      EXA_API: ${EXA_API:-}
+      # EXA_API_KEY is the scout's company finder (exa-search skill). Read-only: the script it
+      # backs has one hardcoded endpoint and no verb that writes or looks a person up. The name is
+      # the one the dashboard's Secrets tab suggests, and the skill's `requires.env` gates on it
+      # with ALL semantics — a second spelling would hide the skill rather than add a fallback.
+      EXA_API_KEY: ${EXA_API_KEY:-}
     volumes:
       - ${OPENCLAW_CONFIG_DIR}:/home/node/.openclaw
       - ${OPENCLAW_WORKSPACE_DIR}:/home/node/.openclaw/workspace
@@ -161,9 +163,11 @@ services:
       AIRTABLE_REVIEWS_BASE_ID: ${AIRTABLE_REVIEWS_BASE_ID:-}
       OUTREACH_ROLE: ${OUTREACH_ROLE:-}
       HUBSPOT_TOKEN: ${HUBSPOT_TOKEN:-}
-      # EXA_API is the scout's company finder (exa-search skill). Read-only: the script it backs
-      # has one hardcoded endpoint and no verb that writes or looks a person up.
-      EXA_API: ${EXA_API:-}
+      # EXA_API_KEY is the scout's company finder (exa-search skill). Read-only: the script it
+      # backs has one hardcoded endpoint and no verb that writes or looks a person up. The name is
+      # the one the dashboard's Secrets tab suggests, and the skill's `requires.env` gates on it
+      # with ALL semantics — a second spelling would hide the skill rather than add a fallback.
+      EXA_API_KEY: ${EXA_API_KEY:-}
     volumes:
       - ${OPENCLAW_CONFIG_DIR}:/home/node/.openclaw
       - ${OPENCLAW_WORKSPACE_DIR}:/home/node/.openclaw/workspace
