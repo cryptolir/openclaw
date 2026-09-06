@@ -100,3 +100,8 @@ updates:
         patterns:
           - "*"
     open-pull-requests-limit: 5
+    ignore:
+      # A Node major changes the runtime of every agent container. It is a
+      # planned PR moving Dockerfile and CI together (dashboard#514/#525).
+      - dependency-name: "node"
+        update-types: ["version-update:semver-major"]

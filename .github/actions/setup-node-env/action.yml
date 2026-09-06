@@ -1,12 +1,12 @@
 name: Setup Node environment
 description: >
-  Initialize submodules with retry, install Node 22, pnpm, optionally Bun,
+  Initialize submodules with retry, install Node 24, pnpm, optionally Bun,
   and run pnpm install. Requires actions/checkout to run first.
 inputs:
   node-version:
     description: Node.js version to install.
     required: false
-    default: "22.x"
+    default: "24.x"
   pnpm-version:
     description: pnpm version for corepack.
     required: false
