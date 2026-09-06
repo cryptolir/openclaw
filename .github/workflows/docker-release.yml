@@ -12,6 +12,7 @@ on:
       - "**/*.mdx"
       - ".agents/**"
       - "skills/**"
+      - ".github/dependabot.yml"
 
 concurrency:
   group: docker-release-${{ github.workflow }}-${{ github.ref }}
