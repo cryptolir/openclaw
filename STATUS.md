@@ -612,3 +612,43 @@ real workload size.
   scripts/build-support-skill.mts in the same PR.
 - Canary discipline: try hermes changes on hermes007 (EU) first, never
   hermi-first. Scope claims need a second reader — count the files.
+
+## 2026-09-04 — Dependabot switched on for both repos; reachable dependency alerts fixed and rolled (Claude session)
+
+Owner-run end-to-end: alerts on → config fixed → Dependabot's first run → hand-picked fixes → deploy → fleet roll → promote.
+
+### Why nothing had ever happened
+
+- Dependabot **alerts** and **security updates** were OFF on both repos (404 from `GET /repos/…/vulnerability-alerts`). Enabled via the API (`PUT …/vulnerability-alerts`, `PUT …/automated-security-fixes`) — both repos, same minute.
+- `cryptolir/openclaw` is a **fork**, and GitHub keeps Dependabot _version updates_ off on forks until enabled by hand (Insights → Dependency graph → Dependabot → Enable; no API). Owner clicked it 2026-09-04. The existing `dependabot.yml` was never the problem — except one entry pointing at `apps/shared/MoltbotKit`, which does not exist in the fork (openclaw#145 removed it).
+- `cryptolir/openclaw-dashboard` had **no `dependabot.yml` at all** (openclaw-dashboard#499 added one: npm `/`, github-actions `/`, docker `/`; plus a `deploy.yml` paths line so a dependabot.yml edit does not cut a prod revision).
+
+First alert counts once enabled: dashboard **98** (5 critical, 54 high), gateway **253** (13 critical, 91 high). Dependabot's own first run opened 6 dashboard PRs and 3 gateway PRs, all minor (`/ui` vite/vitest, a Go module in a docs script, dev deps).
+
+### Dashboard — shipped and on prod (Cloud Run revision `openclaw-dashboard-00531-n9h`)
+
+- **openclaw-dashboard#506** — `next-auth` 5.0.0-beta.30 → beta.32, `@auth/core` → 0.41.3. The two criticals, both in the login layer: malformed `Bearer` now yields `null` (middleware sends `/login` instead of a 500 — verified on prod with a bad header), OAuth check cookies bound to their provider, NFKC email normalisation. Build exit 0, 1733/1734 tests (same as main).
+- **openclaw-dashboard#507** — `npm audit fix --omit=dev` (no majors) + `js-yaml` 4.1.1 → 4.3.2. `next` 15.5.12 → 15.5.25, `protobufjs`, `websocket-driver`, `ws` (via `ethers`/`viem`), `lodash`, `sharp`, `nanoid`, `socket.io-parser`, `fast-xml-*`, `form-data`, `@grpc/grpc-js`; `node-forge` dropped from the tree. `npm audit --omit=dev` 31 → 11 (0 critical). Dependabot auto-closed its superseded openclaw-dashboard#500/#501/#503/#505.
+- Alerts after: 98 → **25** (0 critical). Remaining highs: `adm-zip` (needs 0.6.0, semver-major, direct dep) and `postcss` (only fixable by `next` 16) — both **deliberately skipped: majors need code work**; the rest are dev-only (`brace-expansion`, `browserslist`, `picomatch`, `flatted`).
+- Not verified by me: a real Google sign-in on prod (needs a browser + the owner's account). Owner to click through `/dashboard/platform` once.
+
+### Gateway — shipped, built, rolled
+
+- **openclaw#149** — `tar` 7.5.9 → 7.5.21 (dep + pnpm override), `undici` 7.22.0 → 7.29.1 (root range **and** `extensions/zalo`'s exact pin, which had kept the old copy in the lockfile), `simple-git` → 3.36.0 and `basic-ftp` → 5.3.1 via pnpm overrides. 4 critical + 12 high alerts closed. `pnpm tsgo`/`lint` clean; full `pnpm test` with `--max-old-space-size=12288` = 782/783 files, the one failure (`plugins/discovery` uid-mismatch) fails identically on clean main because the suite runs as root.
+- **openclaw#145** — dropped the MoltbotKit entry; also carried the `oxfmt STATUS.md` fix that had been failing `check` on every PR since openclaw#144 (md-only pushes skip `check` on main, so it surfaced one PR late and blocked `checks (node, test)` via `needs: [check]`).
+- Alerts after: 253 → **198**. Remaining criticals, **deliberately skipped**: `protobufjs` (transitive via `@mariozechner/pi-ai`, lark, baileys — `7.6.5` clears every 7.x advisory as a single override, but it touches the coding-agent core, own PR), `@whiskeysockets/baileys` rc9 → rc12 (a channel SDK, own verification), and `vitest`/`@vitest/browser` (dev only).
+- **Image `v2026.9.4.1`**, sourceSha `4010452f789`, digest `50ba5000da5b`, built with the builder cache pruned first (the `v2026.06.27.1` incident). Verified inside the image before rolling: app tree has exactly `tar` 7.5.21 / `undici` 7.29.1 / `simple-git` 3.36.0 / `basic-ftp` 5.3.1 (older `tar` copies exist only inside the base image's bundled npm CLI).
+- **2ndclaw (US)**: 14 rolled, 0 failed, all on the digest above, 0 restarts, containment 0 bytes in every container. 45-min soak: clean — passes at 22:44 (boot noise only: 8 agents still 1–5 min into boot), 23:00, 23:15, 23:30 all 0 down / 0 restarts / 0 unhealthy / 0 SSRF blocks / 0 error lines / containment 0 bytes.
+- **1stclaw (EU)**: **not rolled yet** — awaiting owner go. 15 agents on `v2026.9.1.1`, all running, disk 81%.
+- **Promote**: **not done.** `v2026.9.4.1` is registered `staging`; stable is still `v2026.9.1.1`. Promote only after EU is rolled and soaked, then `POST /api/platform/releases/v2026.9.4.1/promote`.
+
+### Two things learned the hard way
+
+- **The Sept 1 roll had been partly undone.** Four US agents (`projectmanager`, `social-bob`, `support`, `vcode1bot`) were re-created on 2026-09-02 06:49–06:52 by a dashboard deploy, which writes `OPENCLAW_IMAGE=openclaw:<latest **stable** tag>` (`app/api/agents/deploy/route.ts:749`). Stable was still `v2026.8.19.1` that morning, so they went back to pre-security-port code and stayed there until today. **Promotion is not optional: any dashboard redeploy resets an agent to whatever is marked stable.**
+- `scripts/ops/deploy.sh` has no exec bit; `./deploy.sh` fails with "Permission denied", and a `| tee | grep` pipeline reported exit 0 while the fleet had not moved. Run it as `bash scripts/ops/deploy.sh <tag> <host>` with `pipefail`, and census the containers before soaking.
+
+### Follow-ups (not started, unclaimed)
+
+- openclaw: `protobufjs` override → 7.6.5 (one line, clears a critical); `baileys` rc12; then the next-to-reachable set (`ws`, `axios`, `sharp`, `hono`, `minimatch`, `form-data`).
+- openclaw-dashboard: `adm-zip` 0.6.0 and `next` 16 are code changes, not bumps. Dependabot's 3 open dev-dep PRs (openclaw-dashboard#502, #504, #508) can be batched with the next weekly run.
+- deploy.sh: add `chmod +x` or document `bash`; consider promoting from `deploy.sh` itself once both hosts are rolled, so stable can no longer lag the fleet.
