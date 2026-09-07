@@ -48,6 +48,13 @@ services:
       # Gemini path. Found missing on eu/mystory by the same OB-22 guard —
       # 16 code readers across two skills, zero compose entries.
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      # OpenAI Codex (ChatGPT subscription) login file. openclaw reads it from
+      # $CODEX_HOME/auth.json, default ~/.codex — a path that is NOT a mount, so
+      # a login done inside the container died on the next recreate. Pointing it
+      # inside the config-dir bind keeps it on the host with the rest of the
+      # agent state. Not a secret and identical for every agent, so hardcoded
+      # rather than routed through docker.env.
+      CODEX_HOME: /home/node/.openclaw/.codex
       # Ceyo partner-outreach Agents (dashboard plan docs/plans/active/ceyo-outreach-grid.md,
       # Phase 1). Same allowlist rule as GMAIL_*: written to the agent's docker.env by the
       # operator, reaches the container only via this list; empty for every other agent.
@@ -151,6 +158,13 @@ services:
       # Gemini path. Found missing on eu/mystory by the same OB-22 guard —
       # 16 code readers across two skills, zero compose entries.
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      # OpenAI Codex (ChatGPT subscription) login file. openclaw reads it from
+      # $CODEX_HOME/auth.json, default ~/.codex — a path that is NOT a mount, so
+      # a login done inside the container died on the next recreate. Pointing it
+      # inside the config-dir bind keeps it on the host with the rest of the
+      # agent state. Not a secret and identical for every agent, so hardcoded
+      # rather than routed through docker.env.
+      CODEX_HOME: /home/node/.openclaw/.codex
       # Ceyo partner-outreach Agents (dashboard plan docs/plans/active/ceyo-outreach-grid.md,
       # Phase 1). Same allowlist rule as GMAIL_*: written to the agent's docker.env by the
       # operator, reaches the container only via this list; empty for every other agent.
