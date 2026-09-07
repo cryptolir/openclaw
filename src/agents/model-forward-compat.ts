@@ -4,8 +4,8 @@ import { normalizeModelCompat } from "./model-compat.js";
 import { normalizeProviderId } from "./model-selection.js";
 import type { ModelRegistry } from "./pi-model-discovery.js";
 
-const OPENAI_CODEX_GPT_53_MODEL_ID = "gpt-5.3-codex";
-const OPENAI_CODEX_TEMPLATE_MODEL_IDS = ["gpt-5.2-codex"] as const;
+// Newest bundled Codex entries first: an unknown id clones the closest known shape.
+const OPENAI_CODEX_TEMPLATE_MODEL_IDS = ["gpt-5.3-codex", "gpt-5.2-codex"] as const;
 
 const ANTHROPIC_OPUS_46_MODEL_ID = "claude-opus-4-6";
 const ANTHROPIC_OPUS_46_DOT_MODEL_ID = "claude-opus-4.6";
@@ -64,17 +64,20 @@ function cloneFirstTemplateModel(params: {
   return undefined;
 }
 
-function resolveOpenAICodexGpt53FallbackModel(
+// OpenAI ships new Codex slugs (gpt-5.4-mini, gpt-5.5, gpt-6-astra, ...) faster
+// than the bundled catalog follows, and retires the old ones for ChatGPT-account
+// users — so a catalog-only gate leaves the subscription with NO usable model.
+// Every openai-codex id speaks the same openai-codex-responses API against the
+// ChatGPT backend, so any id the registry does not know is resolved here. A wrong
+// id is not hidden: OpenAI answers it with an explicit "not supported" reply.
+function resolveOpenAICodexForwardCompatModel(
   provider: string,
   modelId: string,
   modelRegistry: ModelRegistry,
 ): Model<Api> | undefined {
   const normalizedProvider = normalizeProviderId(provider);
   const trimmedModelId = modelId.trim();
-  if (normalizedProvider !== "openai-codex") {
-    return undefined;
-  }
-  if (trimmedModelId.toLowerCase() !== OPENAI_CODEX_GPT_53_MODEL_ID) {
+  if (normalizedProvider !== "openai-codex" || !trimmedModelId) {
     return undefined;
   }
 
@@ -284,7 +287,7 @@ export function resolveForwardCompatModel(
   modelRegistry: ModelRegistry,
 ): Model<Api> | undefined {
   return (
-    resolveOpenAICodexGpt53FallbackModel(provider, modelId, modelRegistry) ??
+    resolveOpenAICodexForwardCompatModel(provider, modelId, modelRegistry) ??
     resolveAnthropicOpus46ForwardCompatModel(provider, modelId, modelRegistry) ??
     resolveAnthropicSonnet46ForwardCompatModel(provider, modelId, modelRegistry) ??
     resolveZaiGlm5ForwardCompatModel(provider, modelId, modelRegistry) ??
