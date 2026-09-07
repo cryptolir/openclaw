@@ -7,6 +7,26 @@
 
 ## Active Branches / PRs
 
+> **⚠️ 2026-09-07 — `gateway:v2026.9.7.1` was overwritten and has been restored.**
+> A session building the Codex forward-compat fix (#156) picked the tag `v2026.9.7.1`
+> by hand without checking the day's sequence, and `build-and-push.sh` pushed it over
+> the image built that morning at 11:02 from `0057bbe097e` (the Node 24 LTS build, #154).
+> The dashboard release ledger refused the re-registration (**409, tags are immutable**),
+> which is the only reason it was noticed — the registry itself accepted the overwrite
+> silently.
+> **Repaired the same evening:** the new build now lives at **`v2026.9.7.2`**
+> (`fb7f44ed4a1`, registered 201), `v2026.9.7.1` was pushed back to digest `3e40360adb25`
+> (`0057bbe097e`), and registry + ledger now agree for both tags. `testingbot` (1stClaw),
+> which runs `v2026.9.7.1`, was never affected — it holds its own local copy and has been
+> up since 11:06. `projectmanager` (2ndClaw) runs `v2026.9.7.2`.
+> **Lesson for `build-and-push.sh`:** passing an explicit tag bypasses the auto-increment
+> that would have picked `.2`, and nothing refuses a push onto an existing tag. The ledger
+> is the only immutability guard and it runs _after_ the push. Worth a pre-push check that
+> the tag is unused (`gcloud artifacts docker tags list`), or always letting the script pick.
+> Note the registry writer SA (`openclaw-registry-writer`) can `docker push` over a tag but
+> lacks `artifactregistry.tags.delete`, so `gcloud artifacts docker tags add` cannot move
+> one — repair has to go through `docker push`.
+
 > Claim your branch here BEFORE editing code (`MULTI_AGENT_PROTOCOL.md` §2).
 > One branch = one owner. This table lists **claimed** branches only — for every
 > open PR run `gh pr list --repo cryptolir/openclaw-dashboard`.
