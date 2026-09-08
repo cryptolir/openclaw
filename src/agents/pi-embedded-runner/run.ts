@@ -29,6 +29,7 @@ import { ensureOpenClawModelsJson } from "../models-config.js";
 import {
   formatBillingErrorMessage,
   classifyFailoverReason,
+  describeRawErrorReply,
   formatAssistantErrorText,
   isAuthAssistantError,
   isBillingAssistantError,
@@ -974,6 +975,58 @@ export async function runEmbeddedPiAgent(
                 status,
               });
             }
+          }
+
+          // OB-54: a provider can refuse INSIDE a 200-shaped reply — the
+          // assistant "answer" is a bare error object (the ChatGPT/Codex backend
+          // answers {"detail":"The '<id>' model is not supported…"} for a retired
+          // id). The run completed with stopReason "stop", so nothing above
+          // fires; without this the refusal was delivered as the agent's reply
+          // and the configured fallbacks never engaged.
+          const rawErrorReply =
+            !aborted && lastAssistant?.stopReason !== "error"
+              ? describeRawErrorReply(attempt.assistantTexts)
+              : null;
+          if (rawErrorReply) {
+            log.warn(
+              `[provider-error-reply] ${provider}/${modelId} answered with a bare error object: ${rawErrorReply}`,
+            );
+            const rawErrorReason = classifyFailoverReason(rawErrorReply) ?? "unknown";
+            if (fallbackConfigured) {
+              throw new FailoverError(rawErrorReply, {
+                reason: rawErrorReason,
+                provider: activeErrorContext.provider,
+                model: activeErrorContext.model,
+                profileId: lastProfileId,
+                status: resolveFailoverStatus(rawErrorReason),
+              });
+            }
+            // No fallbacks: surface it as an ERROR, never as the answer.
+            return {
+              payloads: [
+                {
+                  text: `⚠️ ${activeErrorContext.provider}/${activeErrorContext.model} refused the request: ${rawErrorReply}`,
+                  isError: true,
+                },
+              ],
+              meta: {
+                durationMs: Date.now() - started,
+                agentMeta: {
+                  sessionId: sessionIdUsed,
+                  provider: lastAssistant?.provider ?? provider,
+                  model: lastAssistant?.model ?? model.id,
+                  usage: toNormalizedUsage(usageAccumulator),
+                },
+                aborted,
+                systemPromptReport: attempt.systemPromptReport,
+              },
+              didSendViaMessagingTool: attempt.didSendViaMessagingTool,
+              toolMetas: attempt.toolMetas,
+              messagingToolSentTexts: attempt.messagingToolSentTexts,
+              messagingToolSentMediaUrls: attempt.messagingToolSentMediaUrls,
+              messagingToolSentTargets: attempt.messagingToolSentTargets,
+              successfulCronAdds: attempt.successfulCronAdds,
+            };
           }
 
           const usage = toNormalizedUsage(usageAccumulator);

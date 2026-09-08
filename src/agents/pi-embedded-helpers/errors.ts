@@ -258,6 +258,19 @@ function shouldRewriteBillingText(raw: string): boolean {
 
 type ErrorPayload = Record<string, unknown>;
 
+/** Keys a bare error body may carry and still be "only an error" (OB-54). */
+const BARE_ERROR_KEYS = new Set([
+  "detail",
+  "error",
+  "message",
+  "code",
+  "type",
+  "status",
+  "status_code",
+  "request_id",
+  "requestId",
+]);
+
 function isErrorPayloadObject(payload: unknown): payload is ErrorPayload {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
     return false;
@@ -265,6 +278,17 @@ function isErrorPayloadObject(payload: unknown): payload is ErrorPayload {
   const record = payload as ErrorPayload;
   if (record.type === "error") {
     return true;
+  }
+  // Bare error bodies: FastAPI-style {"detail":"…"} (the ChatGPT/Codex backend's
+  // plan refusals, OB-54) and {"error":"…"} with a string. Both arrive INSIDE a
+  // 200-shaped completion, so this is the only place they can be recognised.
+  // "Bare" is load-bearing: every key must be error-ish, so a structured
+  // answer that happens to carry a `detail` field is still an answer.
+  if (
+    (typeof record.detail === "string" && record.detail.trim()) ||
+    (typeof record.error === "string" && record.error.trim())
+  ) {
+    return Object.keys(record).every((k) => BARE_ERROR_KEYS.has(k));
   }
   if (typeof record.request_id === "string" || typeof record.requestId === "string") {
     return true;
@@ -366,7 +390,14 @@ export function parseApiErrorInfo(raw?: string): ApiErrorInfo | null {
         : undefined;
 
   const topType = typeof payload.type === "string" ? payload.type : undefined;
-  const topMessage = typeof payload.message === "string" ? payload.message : undefined;
+  const topMessage =
+    typeof payload.message === "string"
+      ? payload.message
+      : typeof payload.detail === "string"
+        ? payload.detail
+        : typeof payload.error === "string"
+          ? payload.error
+          : undefined;
 
   let errType: string | undefined;
   let errMessage: string | undefined;
@@ -389,6 +420,23 @@ export function parseApiErrorInfo(raw?: string): ApiErrorInfo | null {
     message: errMessage ?? topMessage,
     requestId,
   };
+}
+
+/**
+ * OB-54: a provider that refuses INSIDE a 200-shaped reply. The run ends with
+ * stopReason "stop" and the assistant "answer" is a bare error object, so none
+ * of the error paths fire and the refusal is shown as the agent's reply while
+ * `fallbacks` never engage. Returns the refusal's message when the LAST
+ * assistant text is such an object, else null. Keyed on the payload shape
+ * (isErrorPayloadObject), never on one provider's wording.
+ */
+export function describeRawErrorReply(assistantTexts: readonly string[]): string | null {
+  const last = assistantTexts.length ? assistantTexts[assistantTexts.length - 1] : "";
+  const trimmed = (last ?? "").trim();
+  if (!trimmed || !isRawApiErrorPayload(trimmed)) {
+    return null;
+  }
+  return parseApiErrorInfo(trimmed)?.message?.trim() || trimmed;
 }
 
 export function formatRawAssistantErrorForUi(raw?: string): string {
