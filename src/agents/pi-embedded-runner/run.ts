@@ -29,6 +29,7 @@ import { ensureOpenClawModelsJson } from "../models-config.js";
 import {
   formatBillingErrorMessage,
   classifyFailoverReason,
+  failoverReasonFromStatus,
   formatAssistantErrorText,
   isAuthAssistantError,
   isBillingAssistantError,
@@ -974,6 +975,80 @@ export async function runEmbeddedPiAgent(
                 status,
               });
             }
+          }
+
+          // OB-54: a provider that refuses INSIDE a 200-shaped reply — the
+          // attempt already recognised the bare error object, kept it out of
+          // block delivery and branched the session past the turn. ALWAYS throw
+          // a FailoverError here: runWithModelFallback owns the effective
+          // fallback list (per-agent overrides included — Codex #159 r1), tries
+          // the next candidate, and with none left surfaces the refusal as an
+          // error, never as the answer.
+          const rawError = attempt.rawErrorReply ?? null;
+          if (rawError) {
+            log.warn(
+              `[provider-error-reply] ${provider}/${modelId} answered with a bare error object` +
+                `${rawError.status ? ` (status ${rawError.status})` : ""}: ${rawError.message}`,
+            );
+            if (!rawError.retrySafe) {
+              // Tools ran this turn: replaying it (profile rotation or a
+              // fallback model) would replay their side effects. Surface the
+              // refusal as an ERROR — never as the answer — and stop here.
+              return {
+                payloads: [
+                  {
+                    text: `⚠️ ${activeErrorContext.provider}/${activeErrorContext.model} refused the request after tool calls: ${rawError.message}`,
+                    isError: true,
+                  },
+                ],
+                meta: {
+                  durationMs: Date.now() - started,
+                  agentMeta: {
+                    sessionId: sessionIdUsed,
+                    provider: lastAssistant?.provider ?? provider,
+                    model: lastAssistant?.model ?? model.id,
+                    usage: toNormalizedUsage(usageAccumulator),
+                  },
+                  aborted,
+                  systemPromptReport: attempt.systemPromptReport,
+                },
+                didSendViaMessagingTool: attempt.didSendViaMessagingTool,
+                toolMetas: attempt.toolMetas,
+                messagingToolSentTexts: attempt.messagingToolSentTexts,
+                messagingToolSentMediaUrls: attempt.messagingToolSentMediaUrls,
+                messagingToolSentTargets: attempt.messagingToolSentTargets,
+                successfulCronAdds: attempt.successfulCronAdds,
+              };
+            }
+            // Classify from the message, else from the payload's own status
+            // (a 429 whose text only says "Please retry later" — Codex #159 r3).
+            const rawErrorReason =
+              classifyFailoverReason(rawError.message) ??
+              failoverReasonFromStatus(rawError.status) ??
+              "unknown";
+            // A classified auth / rate-limit / billing refusal is a PROFILE
+            // problem first: mark it and try the next account for this provider
+            // (the session was already branched past the turn), exactly as the
+            // stopReason:"error" path does. Only then fall over to another model.
+            if (rawErrorReason !== "unknown" && rawErrorReason !== "timeout" && lastProfileId) {
+              await markAuthProfileFailure({
+                store: authStore,
+                profileId: lastProfileId,
+                reason: rawErrorReason,
+                cfg: params.config,
+                agentDir: params.agentDir,
+              });
+              if (await advanceAuthProfile()) {
+                continue;
+              }
+            }
+            throw new FailoverError(rawError.message, {
+              reason: rawErrorReason,
+              provider: activeErrorContext.provider,
+              model: activeErrorContext.model,
+              profileId: lastProfileId,
+              status: rawError.status ?? resolveFailoverStatus(rawErrorReason),
+            });
           }
 
           const usage = toNormalizedUsage(usageAccumulator);

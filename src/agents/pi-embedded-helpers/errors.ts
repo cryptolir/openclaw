@@ -258,13 +258,149 @@ function shouldRewriteBillingText(raw: string): boolean {
 
 type ErrorPayload = Record<string, unknown>;
 
-function isErrorPayloadObject(payload: unknown): payload is ErrorPayload {
+/** Keys a bare error body may carry and still be "only an error" (OB-54). */
+const BARE_ERROR_KEYS = new Set([
+  "detail",
+  "error",
+  "message",
+  "code",
+  "type",
+  "status",
+  "status_code",
+  "request_id",
+  "requestId",
+]);
+
+/** The ChatGPT/Codex backend answers plan refusals as a bare FastAPI
+ *  `{"detail":"…"}` body inside a 200-shaped completion — its own envelope. */
+function isCodexProvider(provider?: string): boolean {
+  return (provider ?? "").trim().toLowerCase() === "openai-codex";
+}
+
+/** A numeric (or numeric-string) `status` / `status_code` in the error ranges. */
+function errorStatusFromRecord(record: ErrorPayload): number | undefined {
+  for (const key of ["status", "status_code"] as const) {
+    const v = record[key];
+    const n =
+      typeof v === "number" ? v : typeof v === "string" && /^\d{3}$/.test(v) ? Number(v) : NaN;
+    if (Number.isInteger(n) && n >= 400 && n <= 599) {
+      return n;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Does a (possibly partial) reply look like it could be an error payload once
+ * complete? Used while streaming to HOLD delivery until message_end can judge
+ * the whole message — so the same wrappers/prefixes the parser strips
+ * (`<final>`, `Error:` / `API error:` prefixes, a leading HTTP code) are
+ * looked through here (Codex #159 r3).
+ */
+const HOLD_PREFIXES = [
+  "error",
+  "api error",
+  "apierror",
+  "openai error",
+  "anthropic error",
+  "gateway error",
+];
+
+export function looksLikeErrorPayloadStart(text: string): boolean {
+  const original = (text ?? "").trim();
+  if (!original) {
+    return false;
+  }
+  const raw = original.replace(FINAL_TAG_RE, "").trim();
+  if (!raw) {
+    // Only tags so far ("<final>") — whatever follows is not known yet: hold.
+    return true;
+  }
+  // A partial "<final" tag: hold until it closes or is ruled out (#159 r4).
+  if (raw.startsWith("<") && raw.length < 8 && "<final>".startsWith(raw.toLowerCase())) {
+    return true;
+  }
+  const head = raw.toLowerCase();
+  // While the text is still a possible prefix of a known error prefix
+  // ("Err", "Error", "429") nothing can be ruled out yet — hold. The
+  // streaming split "Error" | ": {"detail":…}" used to leak the first piece.
+  if (/^\d{1,3}$/.test(head)) {
+    return true;
+  }
+  if (HOLD_PREFIXES.some((p) => p.startsWith(head))) {
+    return true;
+  }
+  const t = raw
+    .replace(/^\d{3}\s+/, "")
+    .replace(ERROR_PAYLOAD_PREFIX_RE, "")
+    .trimStart();
+  // A complete prefix whose remainder is not (yet) an object: hold while the
+  // remainder is empty, otherwise it is prose ("Error: the file was not found").
+  return t.length === 0 ? t !== raw : t.startsWith("{");
+}
+
+/** The failover reason an HTTP status carries on its own (401/403 auth, 402
+ *  billing, 429 rate limit, 408/5xx transient) — for payloads whose message
+ *  says nothing classifiable ("Please retry later") but whose status does. */
+export function failoverReasonFromStatus(status?: number): FailoverReason | null {
+  if (status === undefined) {
+    return null;
+  }
+  if (status === 401 || status === 403) {
+    return "auth";
+  }
+  if (status === 402) {
+    return "billing";
+  }
+  if (status === 429) {
+    return "rate_limit";
+  }
+  if (status === 408 || (status >= 500 && status <= 599)) {
+    return "timeout";
+  }
+  return null;
+}
+
+function isErrorPayloadObject(
+  payload: unknown,
+  provider?: string,
+  leadingStatus?: number,
+): payload is ErrorPayload {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
     return false;
   }
   const record = payload as ErrorPayload;
   if (record.type === "error") {
     return true;
+  }
+  // Bare error bodies: FastAPI-style {"detail":"…"} (the ChatGPT/Codex backend's
+  // plan refusals, OB-54) and {"error":"…"} with a string. Both arrive INSIDE a
+  // 200-shaped completion, so this is the only place they can be recognised.
+  // "Bare" is load-bearing: every key must be error-ish — and the field name
+  // alone is NOT a signal, because a prompt may legitimately ask for exactly
+  // {"detail":"…"} or {"error":"…"} (Codex #159 r1/r2). Two independent
+  // signals are accepted: concrete error metadata (a numeric status / a code)
+  // or the provider's own envelope (the Codex backend's bare `detail`).
+  const bareMessage =
+    typeof record.detail === "string" && record.detail.trim()
+      ? record.detail
+      : typeof record.error === "string" && record.error.trim()
+        ? record.error
+        : undefined;
+  if (bareMessage !== undefined) {
+    if (!Object.keys(record).every((k) => BARE_ERROR_KEYS.has(k))) {
+      return false;
+    }
+    // Metadata must be ERROR-valued: an HTTP status in 400–599. A `code` alone
+    // is not one — {"error":"ok","code":"OK"} is an answer (Codex #159 r3).
+    if (errorStatusFromRecord(record) !== undefined) {
+      return true;
+    }
+    // …or a leading HTTP code the caller already peeled off ("429 {…}").
+    if (leadingStatus !== undefined && leadingStatus >= 400 && leadingStatus <= 599) {
+      return true;
+    }
+    return typeof record.detail === "string" && isCodexProvider(provider);
   }
   if (typeof record.request_id === "string" || typeof record.requestId === "string") {
     return true;
@@ -285,7 +421,11 @@ function isErrorPayloadObject(payload: unknown): payload is ErrorPayload {
   return false;
 }
 
-function parseApiErrorPayload(raw: string): ErrorPayload | null {
+function parseApiErrorPayload(
+  raw: string,
+  provider?: string,
+  leadingStatus?: number,
+): ErrorPayload | null {
   if (!raw) {
     return null;
   }
@@ -303,7 +443,7 @@ function parseApiErrorPayload(raw: string): ErrorPayload | null {
     }
     try {
       const parsed = JSON.parse(candidate) as unknown;
-      if (isErrorPayloadObject(parsed)) {
+      if (isErrorPayloadObject(parsed, provider, leadingStatus)) {
         return parsed;
       }
     } catch {
@@ -313,19 +453,19 @@ function parseApiErrorPayload(raw: string): ErrorPayload | null {
   return null;
 }
 
-export function getApiErrorPayloadFingerprint(raw?: string): string | null {
+export function getApiErrorPayloadFingerprint(raw?: string, provider?: string): string | null {
   if (!raw) {
     return null;
   }
-  const payload = parseApiErrorPayload(raw);
+  const payload = parseApiErrorPayload(raw, provider);
   if (!payload) {
     return null;
   }
   return stableStringify(payload);
 }
 
-export function isRawApiErrorPayload(raw?: string): boolean {
-  return getApiErrorPayloadFingerprint(raw) !== null;
+export function isRawApiErrorPayload(raw?: string, provider?: string): boolean {
+  return getApiErrorPayloadFingerprint(raw, provider) !== null;
 }
 
 export type ApiErrorInfo = {
@@ -333,9 +473,13 @@ export type ApiErrorInfo = {
   type?: string;
   message?: string;
   requestId?: string;
+  /** Error-valued HTTP status carried by the payload (or its leading code). */
+  status?: number;
 };
 
-export function parseApiErrorInfo(raw?: string): ApiErrorInfo | null {
+export type RawErrorReply = { message: string; status?: number };
+
+export function parseApiErrorInfo(raw?: string, provider?: string): ApiErrorInfo | null {
   if (!raw) {
     return null;
   }
@@ -353,7 +497,8 @@ export function parseApiErrorInfo(raw?: string): ApiErrorInfo | null {
     candidate = httpPrefixMatch[2].trim();
   }
 
-  const payload = parseApiErrorPayload(candidate);
+  const leadingStatus = httpCode ? Number(httpCode) : undefined;
+  const payload = parseApiErrorPayload(candidate, provider, leadingStatus);
   if (!payload) {
     return null;
   }
@@ -366,7 +511,14 @@ export function parseApiErrorInfo(raw?: string): ApiErrorInfo | null {
         : undefined;
 
   const topType = typeof payload.type === "string" ? payload.type : undefined;
-  const topMessage = typeof payload.message === "string" ? payload.message : undefined;
+  const topMessage =
+    typeof payload.message === "string"
+      ? payload.message
+      : typeof payload.detail === "string"
+        ? payload.detail
+        : typeof payload.error === "string"
+          ? payload.error
+          : undefined;
 
   let errType: string | undefined;
   let errMessage: string | undefined;
@@ -383,11 +535,47 @@ export function parseApiErrorInfo(raw?: string): ApiErrorInfo | null {
     }
   }
 
+  const httpCodeNumber = httpCode ? Number(httpCode) : NaN;
   return {
     httpCode,
     type: errType ?? topType,
     message: errMessage ?? topMessage,
     requestId,
+    status:
+      errorStatusFromRecord(payload) ??
+      (Number.isInteger(httpCodeNumber) && httpCodeNumber >= 400 && httpCodeNumber <= 599
+        ? httpCodeNumber
+        : undefined),
+  };
+}
+
+/**
+ * OB-54: a provider that refuses INSIDE a 200-shaped reply. The run ends with
+ * stopReason "stop" and the assistant "answer" is a bare error object, so none
+ * of the error paths fire and the refusal is shown as the agent's reply while
+ * `fallbacks` never engage. Returns the refusal's message when the LAST
+ * assistant text is such an object, else null. Keyed on the payload shape
+ * (isErrorPayloadObject), never on one provider's wording.
+ */
+export function describeRawErrorReply(
+  assistantTexts: readonly string[],
+  provider?: string,
+): RawErrorReply | null {
+  const last = assistantTexts.length ? assistantTexts[assistantTexts.length - 1] : "";
+  const trimmed = (last ?? "").trim();
+  if (!trimmed) {
+    return null;
+  }
+  // parseApiErrorInfo is the guard: it knows the "Error:" prefixes and peels a
+  // leading HTTP code ("429 {…}"), counting that code as error metadata, and
+  // answers null for anything that is not an error payload (#159 r4).
+  const info = parseApiErrorInfo(trimmed, provider);
+  if (!info) {
+    return null;
+  }
+  return {
+    message: info?.message?.trim() || trimmed,
+    ...(info?.status !== undefined ? { status: info.status } : {}),
   };
 }
 

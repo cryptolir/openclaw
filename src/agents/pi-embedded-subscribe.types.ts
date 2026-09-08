@@ -31,6 +31,9 @@ export type SubscribeEmbeddedPiSessionParams = {
   enforceFinalTag?: boolean;
   config?: OpenClawConfig;
   sessionKey?: string;
+  /** The model provider of this run — lets the subscription recognise the
+   *  provider's own error envelope in a 200-shaped reply (OB-54). */
+  provider?: string;
 };
 
 export type { BlockReplyChunking } from "./pi-embedded-block-chunker.js";

@@ -37,6 +37,9 @@ export {
   isTimeoutErrorMessage,
   parseImageDimensionError,
   parseImageSizeError,
+  describeRawErrorReply,
+  failoverReasonFromStatus,
+  looksLikeErrorPayloadStart,
 } from "./pi-embedded-helpers/errors.js";
 export { isGoogleModelApi, sanitizeGoogleTurnOrdering } from "./pi-embedded-helpers/google.js";
 
@@ -62,3 +65,4 @@ export type { EmbeddedContextFile, FailoverReason } from "./pi-embedded-helpers/
 
 export type { ToolCallIdMode } from "./tool-call-id.js";
 export { isValidCloudCodeAssistToolId, sanitizeToolCallId } from "./tool-call-id.js";
+export type { RawErrorReply } from "./pi-embedded-helpers/errors.js";

@@ -845,6 +845,7 @@ export async function runEmbeddedAttempt(
         enforceFinalTag: params.enforceFinalTag,
         config: params.config,
         sessionKey: params.sessionKey ?? params.sessionId,
+        provider: params.provider,
       });
 
       const {
@@ -858,6 +859,7 @@ export async function runEmbeddedAttempt(
         getSuccessfulCronAdds,
         didSendViaMessagingTool,
         getLastToolError,
+        getRawErrorReply,
         getUsageTotals,
         getCompactionCount,
       } = subscription;
@@ -1270,6 +1272,70 @@ export async function runEmbeddedAttempt(
         .toReversed()
         .find((m) => m.role === "assistant");
 
+      // OB-54: a provider that refuses INSIDE a 200-shaped reply — the assistant
+      // "answer" is a bare error object, stopReason "stop". The runner turns it
+      // into a FailoverError; before that, branch the session back to BEFORE
+      // this turn's user message so the fallback model receives the original
+      // turn exactly once and the refusal never stays in future context.
+      let rawErrorReply: EmbeddedRunAttemptResult["rawErrorReply"] = null;
+      if (!aborted && !promptError && lastAssistant?.stopReason !== "error") {
+        // The subscription judged the COMPLETE message (streamed or not) with
+        // the provider's envelope in hand; the runner fails over on it.
+        const rawError = getRawErrorReply?.() ?? null;
+        if (rawError) {
+          // Replaying the turn is only safe when no tool ran: a fallback model
+          // re-running it would re-execute the tools' side effects. With tools,
+          // the refusal is still an ERROR (never the answer) but the runner
+          // surfaces it instead of retrying (Codex #159 r3).
+          const retrySafe = toolMetas.length === 0;
+          rawErrorReply = { ...rawError, retrySafe };
+          if (!retrySafe) {
+            log.warn(
+              `[provider-error-reply] ${params.provider}/${params.modelId} answered with a bare error object after tool calls; ` +
+                `not branching the session (replaying would replay their side effects). runId=${params.runId}`,
+            );
+          } else {
+            try {
+              // Walk from the leaf past trailing custom entries (the cache-ttl
+              // marker is appended AFTER the prompt) and the refused assistant
+              // message to this turn's user message; branch from ITS parent so
+              // the fallback receives the original turn exactly once (Codex
+              // #159 r2). Bounded: a turn never trails more than a few entries.
+              let entry = sessionManager.getLeafEntry();
+              let hops = 0;
+              while (
+                entry &&
+                !(entry.type === "message" && entry.message.role === "user") &&
+                hops < 8
+              ) {
+                entry = entry.parentId ? sessionManager.getEntry(entry.parentId) : undefined;
+                hops += 1;
+              }
+              const userEntry =
+                entry && entry.type === "message" && entry.message.role === "user"
+                  ? entry
+                  : undefined;
+              if (!userEntry) {
+                throw new Error("originating user message not found within 8 entries");
+              }
+              if (userEntry.parentId) {
+                sessionManager.branch(userEntry.parentId);
+              } else {
+                sessionManager.resetLeaf();
+              }
+              log.warn(
+                `[provider-error-reply] ${params.provider}/${params.modelId} answered with a bare error object; ` +
+                  `branched the session past the turn for failover. runId=${params.runId} sessionId=${params.sessionId}`,
+              );
+            } catch (err) {
+              log.warn(
+                `[provider-error-reply] could not branch the session past the refused turn: ${String(err)}`,
+              );
+            }
+          }
+        }
+      }
+
       const toolMetasNormalized = toolMetas
         .filter(
           (entry): entry is { toolName: string; meta?: string } =>
@@ -1313,6 +1379,7 @@ export async function runEmbeddedAttempt(
         assistantTexts,
         toolMetas: toolMetasNormalized,
         lastAssistant,
+        rawErrorReply,
         lastToolError: getLastToolError?.(),
         didSendViaMessagingTool: didSendViaMessagingTool(),
         messagingToolSentTexts: getMessagingToolSentTexts(),

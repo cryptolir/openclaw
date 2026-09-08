@@ -4,6 +4,7 @@ import type { ReasoningLevel } from "../auto-reply/thinking.js";
 import type { InlineCodeState } from "../markdown/code-spans.js";
 import type { HookRunner } from "../plugins/hooks.js";
 import type { EmbeddedBlockChunker } from "./pi-embedded-block-chunker.js";
+import type { RawErrorReply } from "./pi-embedded-helpers.js";
 import type { MessagingToolSend } from "./pi-embedded-messaging.js";
 import type {
   BlockReplyChunking,
@@ -60,6 +61,9 @@ export type EmbeddedPiSubscribeState = {
   assistantTextBaseline: number;
   suppressBlockChunks: boolean;
   lastReasoningSent?: string;
+  /** OB-54: the assistant "answer" was a bare provider error object; it was
+   *  kept out of every delivery path and the runner will fail over on it. */
+  rawErrorReply?: RawErrorReply;
 
   compactionInFlight: boolean;
   pendingCompactionRetry: number;

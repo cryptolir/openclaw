@@ -48,6 +48,10 @@ export type EmbeddedRunAttemptResult = {
   cloudCodeAssistFormatError: boolean;
   attemptUsage?: NormalizedUsage;
   compactionCount?: number;
+  /** OB-54: the assistant "answer" was a bare provider error object. `retrySafe`
+   *  = no tool ran this turn, so the session was branched past it and a
+   *  fallback may replay the turn; otherwise it must only be surfaced. */
+  rawErrorReply?: { message: string; status?: number; retrySafe: boolean } | null;
   /** Client tool call detected (OpenResponses hosted tools). */
   clientToolCall?: { name: string; params: Record<string, unknown> };
 };

@@ -7,6 +7,7 @@ import {
   isMessagingToolDuplicateNormalized,
   normalizeTextForComparison,
 } from "./pi-embedded-helpers.js";
+import { describeRawErrorReply, looksLikeErrorPayloadStart } from "./pi-embedded-helpers.js";
 import type { EmbeddedPiSubscribeContext } from "./pi-embedded-subscribe.handlers.types.js";
 import { appendRawStream } from "./pi-embedded-subscribe.raw-stream.js";
 import {
@@ -177,6 +178,12 @@ export function handleMessageUpdate(
       inlineCode: createInlineCodeState(),
     })
     .trim();
+  // OB-54: a reply that (once its wrappers/prefixes are looked through) opens
+  // with "{" may be a provider error object — which can only be judged on the
+  // COMPLETE message: a long one is split across chunks and no fragment
+  // parses. Hold every delivery path until message_end classifies it; a
+  // legitimate JSON answer is then delivered whole, a refusal never.
+  const holdingJsonReply = looksLikeErrorPayloadStart(next);
   if (next) {
     const wasThinking = ctx.state.partialBlockState.thinking;
     const visibleDelta = chunk ? ctx.stripBlockTags(chunk, ctx.state.partialBlockState) : "";
@@ -209,7 +216,7 @@ export function handleMessageUpdate(
     ctx.state.lastStreamedAssistant = next;
     ctx.state.lastStreamedAssistantCleaned = cleanedText;
 
-    if (shouldEmit) {
+    if (shouldEmit && !holdingJsonReply) {
       emitAgentEvent({
         runId: ctx.params.runId,
         stream: "assistant",
@@ -237,11 +244,16 @@ export function handleMessageUpdate(
     }
   }
 
-  if (ctx.params.onBlockReply && ctx.blockChunking && ctx.state.blockReplyBreak === "text_end") {
+  if (
+    ctx.params.onBlockReply &&
+    ctx.blockChunking &&
+    ctx.state.blockReplyBreak === "text_end" &&
+    !holdingJsonReply
+  ) {
     ctx.blockChunker?.drain({ force: false, emit: ctx.emitBlockChunk });
   }
 
-  if (evtType === "text_end" && ctx.state.blockReplyBreak === "text_end") {
+  if (evtType === "text_end" && ctx.state.blockReplyBreak === "text_end" && !holdingJsonReply) {
     ctx.flushBlockReplyBuffer();
   }
 }
@@ -274,6 +286,22 @@ export function handleMessageEnd(
     text: ctx.stripBlockTags(rawText, { thinking: false, final: false }),
     messagingToolSentTexts: ctx.state.messagingToolSentTexts,
   });
+  // OB-54: classify the COMPLETE assistant message before either delivery path
+  // (streamed chunks were held above; the message_end path is gated below).
+  // A bare provider error object is recorded for the runner (which fails
+  // over), kept in assistantTexts once, and never handed to the channel.
+  const rawErrorReply = describeRawErrorReply([text], ctx.params.provider);
+  // Overwritten for EVERY completed assistant message: an intermediate refusal
+  // in a tool loop must not outlive a later message that completed normally
+  // (#159 r4).
+  ctx.state.rawErrorReply = rawErrorReply ?? undefined;
+  if (rawErrorReply) {
+    ctx.blockChunker?.reset();
+    ctx.state.blockBuffer = "";
+    ctx.log.warn(
+      `[provider-error-reply] suppressed a bare error object before delivery: ${rawErrorReply.message}`,
+    );
+  }
   const rawThinking =
     ctx.state.includeReasoning || ctx.state.streamReasoning
       ? extractAssistantThinking(assistantMessage) || extractThinkingFromTaggedText(rawText)
@@ -297,7 +325,7 @@ export function handleMessageEnd(
     }
   }
 
-  if (!ctx.state.emittedAssistantUpdate && (cleanedText || hasMedia)) {
+  if (!rawErrorReply && !ctx.state.emittedAssistantUpdate && (cleanedText || hasMedia)) {
     emitAgentEvent({
       runId: ctx.params.runId,
       stream: "assistant",
@@ -344,6 +372,7 @@ export function handleMessageEnd(
   }
 
   if (
+    !rawErrorReply &&
     (ctx.state.blockReplyBreak === "message_end" ||
       (ctx.blockChunker ? ctx.blockChunker.hasBuffered() : ctx.state.blockBuffer.length > 0)) &&
     text &&
@@ -399,7 +428,7 @@ export function handleMessageEnd(
     ctx.emitReasoningStream(rawThinking);
   }
 
-  if (ctx.state.blockReplyBreak === "text_end" && onBlockReply) {
+  if (!rawErrorReply && ctx.state.blockReplyBreak === "text_end" && onBlockReply) {
     const tailResult = ctx.consumeReplyDirectives("", { final: true });
     if (tailResult) {
       const {
