@@ -277,6 +277,58 @@ function isCodexProvider(provider?: string): boolean {
   return (provider ?? "").trim().toLowerCase() === "openai-codex";
 }
 
+/** A numeric (or numeric-string) `status` / `status_code` in the error ranges. */
+function errorStatusFromRecord(record: ErrorPayload): number | undefined {
+  for (const key of ["status", "status_code"] as const) {
+    const v = record[key];
+    const n =
+      typeof v === "number" ? v : typeof v === "string" && /^\d{3}$/.test(v) ? Number(v) : NaN;
+    if (Number.isInteger(n) && n >= 400 && n <= 599) {
+      return n;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Does a (possibly partial) reply look like it could be an error payload once
+ * complete? Used while streaming to HOLD delivery until message_end can judge
+ * the whole message — so the same wrappers/prefixes the parser strips
+ * (`<final>`, `Error:` / `API error:` prefixes, a leading HTTP code) are
+ * looked through here (Codex #159 r3).
+ */
+export function looksLikeErrorPayloadStart(text: string): boolean {
+  const t = (text ?? "")
+    .replace(FINAL_TAG_RE, "")
+    .trim()
+    .replace(/^\d{3}\s+/, "")
+    .replace(ERROR_PAYLOAD_PREFIX_RE, "")
+    .trimStart();
+  return t.startsWith("{");
+}
+
+/** The failover reason an HTTP status carries on its own (401/403 auth, 402
+ *  billing, 429 rate limit, 408/5xx transient) — for payloads whose message
+ *  says nothing classifiable ("Please retry later") but whose status does. */
+export function failoverReasonFromStatus(status?: number): FailoverReason | null {
+  if (status === undefined) {
+    return null;
+  }
+  if (status === 401 || status === 403) {
+    return "auth";
+  }
+  if (status === 402) {
+    return "billing";
+  }
+  if (status === 429) {
+    return "rate_limit";
+  }
+  if (status === 408 || (status >= 500 && status <= 599)) {
+    return "timeout";
+  }
+  return null;
+}
+
 function isErrorPayloadObject(payload: unknown, provider?: string): payload is ErrorPayload {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
     return false;
@@ -303,11 +355,9 @@ function isErrorPayloadObject(payload: unknown, provider?: string): payload is E
     if (!Object.keys(record).every((k) => BARE_ERROR_KEYS.has(k))) {
       return false;
     }
-    const hasErrorMetadata =
-      typeof record.status === "number" ||
-      typeof record.status_code === "number" ||
-      (typeof record.code === "string" && record.code.trim().length > 0);
-    if (hasErrorMetadata) {
+    // Metadata must be ERROR-valued: an HTTP status in 400–599. A `code` alone
+    // is not one — {"error":"ok","code":"OK"} is an answer (Codex #159 r3).
+    if (errorStatusFromRecord(record) !== undefined) {
       return true;
     }
     return typeof record.detail === "string" && isCodexProvider(provider);
@@ -379,7 +429,11 @@ export type ApiErrorInfo = {
   type?: string;
   message?: string;
   requestId?: string;
+  /** Error-valued HTTP status carried by the payload (or its leading code). */
+  status?: number;
 };
+
+export type RawErrorReply = { message: string; status?: number };
 
 export function parseApiErrorInfo(raw?: string, provider?: string): ApiErrorInfo | null {
   if (!raw) {
@@ -436,11 +490,17 @@ export function parseApiErrorInfo(raw?: string, provider?: string): ApiErrorInfo
     }
   }
 
+  const httpCodeNumber = httpCode ? Number(httpCode) : NaN;
   return {
     httpCode,
     type: errType ?? topType,
     message: errMessage ?? topMessage,
     requestId,
+    status:
+      errorStatusFromRecord(payload) ??
+      (Number.isInteger(httpCodeNumber) && httpCodeNumber >= 400 && httpCodeNumber <= 599
+        ? httpCodeNumber
+        : undefined),
   };
 }
 
@@ -455,13 +515,17 @@ export function parseApiErrorInfo(raw?: string, provider?: string): ApiErrorInfo
 export function describeRawErrorReply(
   assistantTexts: readonly string[],
   provider?: string,
-): string | null {
+): RawErrorReply | null {
   const last = assistantTexts.length ? assistantTexts[assistantTexts.length - 1] : "";
   const trimmed = (last ?? "").trim();
   if (!trimmed || !isRawApiErrorPayload(trimmed, provider)) {
     return null;
   }
-  return parseApiErrorInfo(trimmed, provider)?.message?.trim() || trimmed;
+  const info = parseApiErrorInfo(trimmed, provider);
+  return {
+    message: info?.message?.trim() || trimmed,
+    ...(info?.status !== undefined ? { status: info.status } : {}),
+  };
 }
 
 export function formatRawAssistantErrorForUi(raw?: string): string {

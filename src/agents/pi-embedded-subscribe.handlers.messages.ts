@@ -7,7 +7,7 @@ import {
   isMessagingToolDuplicateNormalized,
   normalizeTextForComparison,
 } from "./pi-embedded-helpers.js";
-import { describeRawErrorReply } from "./pi-embedded-helpers.js";
+import { describeRawErrorReply, looksLikeErrorPayloadStart } from "./pi-embedded-helpers.js";
 import type { EmbeddedPiSubscribeContext } from "./pi-embedded-subscribe.handlers.types.js";
 import { appendRawStream } from "./pi-embedded-subscribe.raw-stream.js";
 import {
@@ -166,13 +166,6 @@ export function handleMessageUpdate(
     }
   }
 
-  // OB-54: a reply that opens with "{" may be a provider error object — which
-  // can only be judged on the COMPLETE message (a long one is split across
-  // chunks, and no fragment parses). Hold every delivery path until
-  // message_end classifies it; a legitimate JSON answer is then delivered
-  // whole, a refusal never.
-  const holdingJsonReply = ctx.state.deltaBuffer.trimStart().startsWith("{");
-
   if (ctx.state.streamReasoning) {
     // Handle partial <think> tags: stream whatever reasoning is visible so far.
     ctx.emitReasoningStream(extractThinkingFromTaggedStream(ctx.state.deltaBuffer));
@@ -185,6 +178,12 @@ export function handleMessageUpdate(
       inlineCode: createInlineCodeState(),
     })
     .trim();
+  // OB-54: a reply that (once its wrappers/prefixes are looked through) opens
+  // with "{" may be a provider error object — which can only be judged on the
+  // COMPLETE message: a long one is split across chunks and no fragment
+  // parses. Hold every delivery path until message_end classifies it; a
+  // legitimate JSON answer is then delivered whole, a refusal never.
+  const holdingJsonReply = looksLikeErrorPayloadStart(next);
   if (next) {
     const wasThinking = ctx.state.partialBlockState.thinking;
     const visibleDelta = chunk ? ctx.stripBlockTags(chunk, ctx.state.partialBlockState) : "";
@@ -297,7 +296,7 @@ export function handleMessageEnd(
     ctx.blockChunker?.reset();
     ctx.state.blockBuffer = "";
     ctx.log.warn(
-      `[provider-error-reply] suppressed a bare error object before delivery: ${rawErrorReply}`,
+      `[provider-error-reply] suppressed a bare error object before delivery: ${rawErrorReply.message}`,
     );
   }
   const rawThinking =

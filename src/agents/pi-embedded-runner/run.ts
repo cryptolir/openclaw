@@ -29,6 +29,7 @@ import { ensureOpenClawModelsJson } from "../models-config.js";
 import {
   formatBillingErrorMessage,
   classifyFailoverReason,
+  failoverReasonFromStatus,
   formatAssistantErrorText,
   isAuthAssistantError,
   isBillingAssistantError,
@@ -983,12 +984,48 @@ export async function runEmbeddedPiAgent(
           // fallback list (per-agent overrides included — Codex #159 r1), tries
           // the next candidate, and with none left surfaces the refusal as an
           // error, never as the answer.
-          const rawErrorReply = attempt.rawErrorReply ?? null;
-          if (rawErrorReply) {
+          const rawError = attempt.rawErrorReply ?? null;
+          if (rawError) {
             log.warn(
-              `[provider-error-reply] ${provider}/${modelId} answered with a bare error object: ${rawErrorReply}`,
+              `[provider-error-reply] ${provider}/${modelId} answered with a bare error object` +
+                `${rawError.status ? ` (status ${rawError.status})` : ""}: ${rawError.message}`,
             );
-            const rawErrorReason = classifyFailoverReason(rawErrorReply) ?? "unknown";
+            if (!rawError.retrySafe) {
+              // Tools ran this turn: replaying it (profile rotation or a
+              // fallback model) would replay their side effects. Surface the
+              // refusal as an ERROR — never as the answer — and stop here.
+              return {
+                payloads: [
+                  {
+                    text: `⚠️ ${activeErrorContext.provider}/${activeErrorContext.model} refused the request after tool calls: ${rawError.message}`,
+                    isError: true,
+                  },
+                ],
+                meta: {
+                  durationMs: Date.now() - started,
+                  agentMeta: {
+                    sessionId: sessionIdUsed,
+                    provider: lastAssistant?.provider ?? provider,
+                    model: lastAssistant?.model ?? model.id,
+                    usage: toNormalizedUsage(usageAccumulator),
+                  },
+                  aborted,
+                  systemPromptReport: attempt.systemPromptReport,
+                },
+                didSendViaMessagingTool: attempt.didSendViaMessagingTool,
+                toolMetas: attempt.toolMetas,
+                messagingToolSentTexts: attempt.messagingToolSentTexts,
+                messagingToolSentMediaUrls: attempt.messagingToolSentMediaUrls,
+                messagingToolSentTargets: attempt.messagingToolSentTargets,
+                successfulCronAdds: attempt.successfulCronAdds,
+              };
+            }
+            // Classify from the message, else from the payload's own status
+            // (a 429 whose text only says "Please retry later" — Codex #159 r3).
+            const rawErrorReason =
+              classifyFailoverReason(rawError.message) ??
+              failoverReasonFromStatus(rawError.status) ??
+              "unknown";
             // A classified auth / rate-limit / billing refusal is a PROFILE
             // problem first: mark it and try the next account for this provider
             // (the session was already branched past the turn), exactly as the
@@ -1005,12 +1042,12 @@ export async function runEmbeddedPiAgent(
                 continue;
               }
             }
-            throw new FailoverError(rawErrorReply, {
+            throw new FailoverError(rawError.message, {
               reason: rawErrorReason,
               provider: activeErrorContext.provider,
               model: activeErrorContext.model,
               profileId: lastProfileId,
-              status: resolveFailoverStatus(rawErrorReason),
+              status: rawError.status ?? resolveFailoverStatus(rawErrorReason),
             });
           }
 

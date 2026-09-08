@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   describeRawErrorReply,
+  failoverReasonFromStatus,
   isRawApiErrorPayload,
+  looksLikeErrorPayloadStart,
   parseApiErrorInfo,
 } from "./pi-embedded-helpers.js";
 
@@ -13,24 +15,20 @@ import {
 const CODEX_REFUSAL =
   '{"detail":"The \'gpt-5.4-mini\' model is not supported when using Codex with a ChatGPT account."}';
 const CODEX = "openai-codex";
+const REFUSAL_MESSAGE =
+  "The 'gpt-5.4-mini' model is not supported when using Codex with a ChatGPT account.";
 
 describe("describeRawErrorReply (OB-54)", () => {
   it("recognises the Codex plan refusal — the provider's own envelope — and returns its message", () => {
     expect(isRawApiErrorPayload(CODEX_REFUSAL, CODEX)).toBe(true);
-    expect(parseApiErrorInfo(CODEX_REFUSAL, CODEX)?.message).toBe(
-      "The 'gpt-5.4-mini' model is not supported when using Codex with a ChatGPT account.",
-    );
-    expect(describeRawErrorReply([CODEX_REFUSAL], CODEX)).toBe(
-      "The 'gpt-5.4-mini' model is not supported when using Codex with a ChatGPT account.",
-    );
+    expect(parseApiErrorInfo(CODEX_REFUSAL, CODEX)?.message).toBe(REFUSAL_MESSAGE);
+    expect(describeRawErrorReply([CODEX_REFUSAL], CODEX)).toEqual({ message: REFUSAL_MESSAGE });
   });
 
   it("the bare envelope is provider-scoped — the same body from another provider is an answer (Codex #159 r2)", () => {
     expect(describeRawErrorReply([CODEX_REFUSAL])).toBeNull();
     expect(describeRawErrorReply([CODEX_REFUSAL], "openai")).toBeNull();
     expect(describeRawErrorReply([CODEX_REFUSAL], "venice")).toBeNull();
-    // and wording is never the signal: a refusal-sounding answer from a
-    // non-Codex provider, or an answer that merely uses the field name, stays an answer
     expect(
       describeRawErrorReply(['{"detail":"This feature is not supported"}'], "venice"),
     ).toBeNull();
@@ -38,23 +36,37 @@ describe("describeRawErrorReply (OB-54)", () => {
     expect(describeRawErrorReply(['{"detail":"the requested explanation"}'], "venice")).toBeNull();
   });
 
-  it("concrete error metadata is an independent signal for any provider", () => {
-    expect(describeRawErrorReply(['{"detail":"Rate limit exceeded","status":429}'], "venice")).toBe(
-      "Rate limit exceeded",
-    );
+  it("only ERROR-valued status metadata is an independent signal — and it is carried out (Codex #159 r3)", () => {
+    expect(
+      describeRawErrorReply(['{"detail":"Rate limit exceeded","status":429}'], "venice"),
+    ).toEqual({
+      message: "Rate limit exceeded",
+      status: 429,
+    });
+    expect(describeRawErrorReply(['{"detail":"Please retry later","status":429}'])).toEqual({
+      message: "Please retry later",
+      status: 429,
+    });
+    expect(describeRawErrorReply(['{"error":"nope","status_code":"403"}'])).toEqual({
+      message: "nope",
+      status: 403,
+    });
+    // a 2xx status, or a bare code, is NOT an error signal
+    expect(describeRawErrorReply(['{"detail":"healthy","status":200}'])).toBeNull();
+    expect(describeRawErrorReply(['{"error":"ok","code":"OK"}'])).toBeNull();
     expect(
       describeRawErrorReply(['{"error":"model_not_available","code":"model_not_available"}']),
-    ).toBe("model_not_available");
-    expect(describeRawErrorReply(['{"error":"nope","status_code":403}'])).toBe("nope");
+    ).toBeNull();
     // metadata with non-error-ish keys is still an answer
     expect(describeRawErrorReply(['{"error":"x","status":500,"answer":42}'])).toBeNull();
   });
 
   it("the pre-existing envelope shapes are unchanged", () => {
     expect(
-      describeRawErrorReply(['{"error":{"message":"quota exceeded","type":"insufficient_quota"}}']),
+      describeRawErrorReply(['{"error":{"message":"quota exceeded","type":"insufficient_quota"}}'])
+        ?.message,
     ).toBe("quota exceeded");
-    expect(describeRawErrorReply(['{"type":"error","request_id":"req_1"}'])).toBe(
+    expect(describeRawErrorReply(['{"type":"error","request_id":"req_1"}'])?.message).toBe(
       '{"type":"error","request_id":"req_1"}',
     );
   });
@@ -77,5 +89,37 @@ describe("describeRawErrorReply (OB-54)", () => {
       describeRawErrorReply([CODEX_REFUSAL, "Here is the summary you asked for."], CODEX),
     ).toBeNull();
     expect(describeRawErrorReply(["Working on it…", CODEX_REFUSAL], CODEX)).not.toBeNull();
+  });
+});
+
+describe("looksLikeErrorPayloadStart (the streaming hold)", () => {
+  it("looks through the wrappers and prefixes the parser strips", () => {
+    expect(looksLikeErrorPayloadStart('{"detail":"x')).toBe(true);
+    expect(looksLikeErrorPayloadStart("  {")).toBe(true);
+    expect(looksLikeErrorPayloadStart('<final>{"detail":"x"}</final>')).toBe(true);
+    expect(looksLikeErrorPayloadStart('<final>{"det')).toBe(true);
+    expect(looksLikeErrorPayloadStart('Error: {"detail":"x"}')).toBe(true);
+    expect(looksLikeErrorPayloadStart('API error: {"error":')).toBe(true);
+    expect(looksLikeErrorPayloadStart('429 {"detail":"slow down"}')).toBe(true);
+  });
+  it("lets prose stream", () => {
+    expect(looksLikeErrorPayloadStart("Sure — here is the plan:")).toBe(false);
+    expect(looksLikeErrorPayloadStart("Error: the file was not found")).toBe(false);
+    expect(looksLikeErrorPayloadStart("")).toBe(false);
+    expect(looksLikeErrorPayloadStart("[1,2]")).toBe(false);
+  });
+});
+
+describe("failoverReasonFromStatus", () => {
+  it("maps the statuses the profile-rotation path acts on", () => {
+    expect(failoverReasonFromStatus(401)).toBe("auth");
+    expect(failoverReasonFromStatus(403)).toBe("auth");
+    expect(failoverReasonFromStatus(402)).toBe("billing");
+    expect(failoverReasonFromStatus(429)).toBe("rate_limit");
+    expect(failoverReasonFromStatus(408)).toBe("timeout");
+    expect(failoverReasonFromStatus(503)).toBe("timeout");
+    expect(failoverReasonFromStatus(404)).toBeNull();
+    expect(failoverReasonFromStatus(200)).toBeNull();
+    expect(failoverReasonFromStatus(undefined)).toBeNull();
   });
 });
