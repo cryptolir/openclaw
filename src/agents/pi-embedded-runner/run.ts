@@ -989,6 +989,22 @@ export async function runEmbeddedPiAgent(
               `[provider-error-reply] ${provider}/${modelId} answered with a bare error object: ${rawErrorReply}`,
             );
             const rawErrorReason = classifyFailoverReason(rawErrorReply) ?? "unknown";
+            // A classified auth / rate-limit / billing refusal is a PROFILE
+            // problem first: mark it and try the next account for this provider
+            // (the session was already branched past the turn), exactly as the
+            // stopReason:"error" path does. Only then fall over to another model.
+            if (rawErrorReason !== "unknown" && rawErrorReason !== "timeout" && lastProfileId) {
+              await markAuthProfileFailure({
+                store: authStore,
+                profileId: lastProfileId,
+                reason: rawErrorReason,
+                cfg: params.config,
+                agentDir: params.agentDir,
+              });
+              if (await advanceAuthProfile()) {
+                continue;
+              }
+            }
             throw new FailoverError(rawErrorReply, {
               reason: rawErrorReason,
               provider: activeErrorContext.provider,

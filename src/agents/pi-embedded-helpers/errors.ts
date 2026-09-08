@@ -258,15 +258,6 @@ function shouldRewriteBillingText(raw: string): boolean {
 
 type ErrorPayload = Record<string, unknown>;
 
-/**
- * A bare `{"detail":"…"}` / `{"error":"…"}` body is also what a prompt asking
- * for that JSON shape would legitimately return, so the field name alone is
- * not a signal (Codex #159 r1). The message itself must read as a refusal —
- * generic across providers, never one vendor's exact sentence.
- */
-const BARE_ERROR_MESSAGE_RE =
-  /\b(?:not (?:supported|available|allowed|permitted|found|enabled|authori[sz]ed)|unsupported|unavailable|invalid|unauthori[sz]ed|forbidden|denied|quota|rate[ _-]?limit|exceeded|deprecated|retired|no longer|insufficient|expired|failed|error)\b/i;
-
 /** Keys a bare error body may carry and still be "only an error" (OB-54). */
 const BARE_ERROR_KEYS = new Set([
   "detail",
@@ -280,7 +271,13 @@ const BARE_ERROR_KEYS = new Set([
   "requestId",
 ]);
 
-function isErrorPayloadObject(payload: unknown): payload is ErrorPayload {
+/** The ChatGPT/Codex backend answers plan refusals as a bare FastAPI
+ *  `{"detail":"…"}` body inside a 200-shaped completion — its own envelope. */
+function isCodexProvider(provider?: string): boolean {
+  return (provider ?? "").trim().toLowerCase() === "openai-codex";
+}
+
+function isErrorPayloadObject(payload: unknown, provider?: string): payload is ErrorPayload {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
     return false;
   }
@@ -291,9 +288,11 @@ function isErrorPayloadObject(payload: unknown): payload is ErrorPayload {
   // Bare error bodies: FastAPI-style {"detail":"…"} (the ChatGPT/Codex backend's
   // plan refusals, OB-54) and {"error":"…"} with a string. Both arrive INSIDE a
   // 200-shaped completion, so this is the only place they can be recognised.
-  // "Bare" is load-bearing: every key must be error-ish AND the message must
-  // read as a refusal, so a structured answer that happens to use a `detail`
-  // or `error` field is still an answer.
+  // "Bare" is load-bearing: every key must be error-ish — and the field name
+  // alone is NOT a signal, because a prompt may legitimately ask for exactly
+  // {"detail":"…"} or {"error":"…"} (Codex #159 r1/r2). Two independent
+  // signals are accepted: concrete error metadata (a numeric status / a code)
+  // or the provider's own envelope (the Codex backend's bare `detail`).
   const bareMessage =
     typeof record.detail === "string" && record.detail.trim()
       ? record.detail
@@ -301,11 +300,17 @@ function isErrorPayloadObject(payload: unknown): payload is ErrorPayload {
         ? record.error
         : undefined;
   if (bareMessage !== undefined) {
-    return (
-      Object.keys(record).every((k) => BARE_ERROR_KEYS.has(k)) &&
-      // snake_case codes (model_not_available) must read as words too
-      BARE_ERROR_MESSAGE_RE.test(bareMessage.replace(/[_-]+/g, " "))
-    );
+    if (!Object.keys(record).every((k) => BARE_ERROR_KEYS.has(k))) {
+      return false;
+    }
+    const hasErrorMetadata =
+      typeof record.status === "number" ||
+      typeof record.status_code === "number" ||
+      (typeof record.code === "string" && record.code.trim().length > 0);
+    if (hasErrorMetadata) {
+      return true;
+    }
+    return typeof record.detail === "string" && isCodexProvider(provider);
   }
   if (typeof record.request_id === "string" || typeof record.requestId === "string") {
     return true;
@@ -326,7 +331,7 @@ function isErrorPayloadObject(payload: unknown): payload is ErrorPayload {
   return false;
 }
 
-function parseApiErrorPayload(raw: string): ErrorPayload | null {
+function parseApiErrorPayload(raw: string, provider?: string): ErrorPayload | null {
   if (!raw) {
     return null;
   }
@@ -344,7 +349,7 @@ function parseApiErrorPayload(raw: string): ErrorPayload | null {
     }
     try {
       const parsed = JSON.parse(candidate) as unknown;
-      if (isErrorPayloadObject(parsed)) {
+      if (isErrorPayloadObject(parsed, provider)) {
         return parsed;
       }
     } catch {
@@ -354,19 +359,19 @@ function parseApiErrorPayload(raw: string): ErrorPayload | null {
   return null;
 }
 
-export function getApiErrorPayloadFingerprint(raw?: string): string | null {
+export function getApiErrorPayloadFingerprint(raw?: string, provider?: string): string | null {
   if (!raw) {
     return null;
   }
-  const payload = parseApiErrorPayload(raw);
+  const payload = parseApiErrorPayload(raw, provider);
   if (!payload) {
     return null;
   }
   return stableStringify(payload);
 }
 
-export function isRawApiErrorPayload(raw?: string): boolean {
-  return getApiErrorPayloadFingerprint(raw) !== null;
+export function isRawApiErrorPayload(raw?: string, provider?: string): boolean {
+  return getApiErrorPayloadFingerprint(raw, provider) !== null;
 }
 
 export type ApiErrorInfo = {
@@ -376,7 +381,7 @@ export type ApiErrorInfo = {
   requestId?: string;
 };
 
-export function parseApiErrorInfo(raw?: string): ApiErrorInfo | null {
+export function parseApiErrorInfo(raw?: string, provider?: string): ApiErrorInfo | null {
   if (!raw) {
     return null;
   }
@@ -394,7 +399,7 @@ export function parseApiErrorInfo(raw?: string): ApiErrorInfo | null {
     candidate = httpPrefixMatch[2].trim();
   }
 
-  const payload = parseApiErrorPayload(candidate);
+  const payload = parseApiErrorPayload(candidate, provider);
   if (!payload) {
     return null;
   }
@@ -447,13 +452,16 @@ export function parseApiErrorInfo(raw?: string): ApiErrorInfo | null {
  * assistant text is such an object, else null. Keyed on the payload shape
  * (isErrorPayloadObject), never on one provider's wording.
  */
-export function describeRawErrorReply(assistantTexts: readonly string[]): string | null {
+export function describeRawErrorReply(
+  assistantTexts: readonly string[],
+  provider?: string,
+): string | null {
   const last = assistantTexts.length ? assistantTexts[assistantTexts.length - 1] : "";
   const trimmed = (last ?? "").trim();
-  if (!trimmed || !isRawApiErrorPayload(trimmed)) {
+  if (!trimmed || !isRawApiErrorPayload(trimmed, provider)) {
     return null;
   }
-  return parseApiErrorInfo(trimmed)?.message?.trim() || trimmed;
+  return parseApiErrorInfo(trimmed, provider)?.message?.trim() || trimmed;
 }
 
 export function formatRawAssistantErrorForUi(raw?: string): string {

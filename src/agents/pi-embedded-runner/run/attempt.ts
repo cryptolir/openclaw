@@ -45,7 +45,6 @@ import {
   resolveBootstrapTotalMaxChars,
   validateAnthropicTurns,
   validateGeminiTurns,
-  describeRawErrorReply,
 } from "../../pi-embedded-helpers.js";
 import { subscribeEmbeddedPiSession } from "../../pi-embedded-subscribe.js";
 import {
@@ -846,6 +845,7 @@ export async function runEmbeddedAttempt(
         enforceFinalTag: params.enforceFinalTag,
         config: params.config,
         sessionKey: params.sessionKey ?? params.sessionId,
+        provider: params.provider,
       });
 
       const {
@@ -859,6 +859,7 @@ export async function runEmbeddedAttempt(
         getSuccessfulCronAdds,
         didSendViaMessagingTool,
         getLastToolError,
+        getRawErrorReply,
         getUsageTotals,
         getCompactionCount,
       } = subscription;
@@ -1283,17 +1284,35 @@ export async function runEmbeddedAttempt(
         lastAssistant?.stopReason !== "error" &&
         toolMetas.length === 0
       ) {
-        rawErrorReply = describeRawErrorReply(assistantTexts);
+        // The subscription judged the COMPLETE message (streamed or not) with
+        // the provider's envelope in hand; the runner fails over on it.
+        rawErrorReply = getRawErrorReply?.() ?? null;
         if (rawErrorReply) {
           try {
-            const leaf = sessionManager.getLeafEntry();
-            const parent = leaf?.parentId ? sessionManager.getEntry(leaf.parentId) : undefined;
-            const anchor =
-              parent?.type === "message" && parent.message.role === "user"
-                ? parent.parentId
-                : leaf?.parentId;
-            if (anchor) {
-              sessionManager.branch(anchor);
+            // Walk from the leaf past trailing custom entries (the cache-ttl
+            // marker is appended AFTER the prompt) and the refused assistant
+            // message to this turn's user message; branch from ITS parent so
+            // the fallback receives the original turn exactly once (Codex
+            // #159 r2). Bounded: a turn never trails more than a few entries.
+            let entry = sessionManager.getLeafEntry();
+            let hops = 0;
+            while (
+              entry &&
+              !(entry.type === "message" && entry.message.role === "user") &&
+              hops < 8
+            ) {
+              entry = entry.parentId ? sessionManager.getEntry(entry.parentId) : undefined;
+              hops += 1;
+            }
+            const userEntry =
+              entry && entry.type === "message" && entry.message.role === "user"
+                ? entry
+                : undefined;
+            if (!userEntry) {
+              throw new Error("originating user message not found within 8 entries");
+            }
+            if (userEntry.parentId) {
+              sessionManager.branch(userEntry.parentId);
             } else {
               sessionManager.resetLeaf();
             }

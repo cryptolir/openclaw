@@ -216,12 +216,12 @@ export function buildEmbeddedRunPayloads(params: {
       }
     }
     if (rawErrorFingerprint) {
-      const fingerprint = getApiErrorPayloadFingerprint(trimmed);
+      const fingerprint = getApiErrorPayloadFingerprint(trimmed, params.provider);
       if (fingerprint && fingerprint === rawErrorFingerprint) {
         return true;
       }
     }
-    return isRawApiErrorPayload(trimmed);
+    return isRawApiErrorPayload(trimmed, params.provider);
   };
   const answerTexts = (
     params.assistantTexts.length

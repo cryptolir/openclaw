@@ -60,6 +60,9 @@ export type EmbeddedPiSubscribeState = {
   assistantTextBaseline: number;
   suppressBlockChunks: boolean;
   lastReasoningSent?: string;
+  /** OB-54: the assistant "answer" was a bare provider error object; it was
+   *  kept out of every delivery path and the runner will fail over on it. */
+  rawErrorReply?: string;
 
   compactionInFlight: boolean;
   pendingCompactionRetry: number;
