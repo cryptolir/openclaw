@@ -24,8 +24,11 @@ describe("describeRawErrorReply (OB-54)", () => {
     );
   });
 
-  it('recognises a bare {"error":"…"} string body and the existing object shapes', () => {
+  it("recognises other bare refusal bodies and the pre-existing object shapes", () => {
     expect(describeRawErrorReply(['{"error":"model_not_available"}'])).toBe("model_not_available");
+    expect(describeRawErrorReply(['{"detail":"Rate limit exceeded","status":429}'])).toBe(
+      "Rate limit exceeded",
+    );
     expect(
       describeRawErrorReply(['{"error":{"message":"quota exceeded","type":"insufficient_quota"}}']),
     ).toBe("quota exceeded");
@@ -34,12 +37,16 @@ describe("describeRawErrorReply (OB-54)", () => {
     );
   });
 
-  it("is keyed on the shape — prose, ordinary JSON answers and JSON with other keys are not refusals", () => {
-    expect(describeRawErrorReply(["I cannot help with that."])).toBeNull();
-    // a structured ANSWER that happens to carry a `detail` key is still an answer
-    expect(describeRawErrorReply(['{"answer":42,"detail":"the meaning"}'])).toBeNull();
-    expect(describeRawErrorReply(['{"detail":"x","status":403}'])).toBe("x");
+  it("needs an independent signal — a field named detail/error alone is not a refusal (Codex #159 r1)", () => {
+    // a prompt that asked for exactly this JSON shape gets its answer back
+    expect(describeRawErrorReply(['{"detail":"the requested explanation"}'])).toBeNull();
+    expect(describeRawErrorReply(['{"error":"the requested label"}'])).toBeNull();
+    expect(describeRawErrorReply(['{"detail":"Paris is the capital of France."}'])).toBeNull();
+    // a structured answer that carries other keys is never a refusal
+    expect(describeRawErrorReply(['{"answer":42,"detail":"not supported"}'])).toBeNull();
     expect(describeRawErrorReply(['{"result":"ok"}'])).toBeNull();
+    // and prose, arrays, empties never are
+    expect(describeRawErrorReply(["I cannot help with that."])).toBeNull();
     expect(describeRawErrorReply(['{"detail":""}'])).toBeNull();
     expect(describeRawErrorReply(['{"detail": 42}'])).toBeNull();
     expect(describeRawErrorReply(["[1,2,3]"])).toBeNull();

@@ -48,6 +48,9 @@ export type EmbeddedRunAttemptResult = {
   cloudCodeAssistFormatError: boolean;
   attemptUsage?: NormalizedUsage;
   compactionCount?: number;
+  /** OB-54: the refusal message when the assistant "answer" was a bare error
+   *  object (the session has already been branched past the turn). */
+  rawErrorReply?: string | null;
   /** Client tool call detected (OpenResponses hosted tools). */
   clientToolCall?: { name: string; params: Record<string, unknown> };
 };

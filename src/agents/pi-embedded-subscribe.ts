@@ -10,6 +10,7 @@ import { EmbeddedBlockChunker } from "./pi-embedded-block-chunker.js";
 import {
   isMessagingToolDuplicateNormalized,
   normalizeTextForComparison,
+  describeRawErrorReply,
 } from "./pi-embedded-helpers.js";
 import { createEmbeddedPiSessionEventHandler } from "./pi-embedded-subscribe.handlers.js";
 import type {
@@ -498,6 +499,14 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
     assistantTexts.push(chunk);
     rememberAssistantText(chunk);
     if (!params.onBlockReply) {
+      return;
+    }
+    // OB-54: a provider refusal delivered as the "answer" is a bare error
+    // object. Keep it in assistantTexts (the runner turns it into a failover)
+    // but never hand it to the channel — with block streaming this is the
+    // point where the raw JSON used to reach the user before any fallback ran.
+    if (describeRawErrorReply([chunk])) {
+      log.warn(`[provider-error-reply] suppressed a bare error object from block delivery`);
       return;
     }
     const splitResult = replyDirectiveAccumulator.consume(chunk);

@@ -45,6 +45,7 @@ import {
   resolveBootstrapTotalMaxChars,
   validateAnthropicTurns,
   validateGeminiTurns,
+  describeRawErrorReply,
 } from "../../pi-embedded-helpers.js";
 import { subscribeEmbeddedPiSession } from "../../pi-embedded-subscribe.js";
 import {
@@ -1270,6 +1271,44 @@ export async function runEmbeddedAttempt(
         .toReversed()
         .find((m) => m.role === "assistant");
 
+      // OB-54: a provider that refuses INSIDE a 200-shaped reply — the assistant
+      // "answer" is a bare error object, stopReason "stop". The runner turns it
+      // into a FailoverError; before that, branch the session back to BEFORE
+      // this turn's user message so the fallback model receives the original
+      // turn exactly once and the refusal never stays in future context.
+      let rawErrorReply: string | null = null;
+      if (
+        !aborted &&
+        !promptError &&
+        lastAssistant?.stopReason !== "error" &&
+        toolMetas.length === 0
+      ) {
+        rawErrorReply = describeRawErrorReply(assistantTexts);
+        if (rawErrorReply) {
+          try {
+            const leaf = sessionManager.getLeafEntry();
+            const parent = leaf?.parentId ? sessionManager.getEntry(leaf.parentId) : undefined;
+            const anchor =
+              parent?.type === "message" && parent.message.role === "user"
+                ? parent.parentId
+                : leaf?.parentId;
+            if (anchor) {
+              sessionManager.branch(anchor);
+            } else {
+              sessionManager.resetLeaf();
+            }
+            log.warn(
+              `[provider-error-reply] ${params.provider}/${params.modelId} answered with a bare error object; ` +
+                `branched the session past the turn for failover. runId=${params.runId} sessionId=${params.sessionId}`,
+            );
+          } catch (err) {
+            log.warn(
+              `[provider-error-reply] could not branch the session past the refused turn: ${String(err)}`,
+            );
+          }
+        }
+      }
+
       const toolMetasNormalized = toolMetas
         .filter(
           (entry): entry is { toolName: string; meta?: string } =>
@@ -1313,6 +1352,7 @@ export async function runEmbeddedAttempt(
         assistantTexts,
         toolMetas: toolMetasNormalized,
         lastAssistant,
+        rawErrorReply,
         lastToolError: getLastToolError?.(),
         didSendViaMessagingTool: didSendViaMessagingTool(),
         messagingToolSentTexts: getMessagingToolSentTexts(),

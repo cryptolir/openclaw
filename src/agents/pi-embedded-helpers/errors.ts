@@ -258,6 +258,15 @@ function shouldRewriteBillingText(raw: string): boolean {
 
 type ErrorPayload = Record<string, unknown>;
 
+/**
+ * A bare `{"detail":"…"}` / `{"error":"…"}` body is also what a prompt asking
+ * for that JSON shape would legitimately return, so the field name alone is
+ * not a signal (Codex #159 r1). The message itself must read as a refusal —
+ * generic across providers, never one vendor's exact sentence.
+ */
+const BARE_ERROR_MESSAGE_RE =
+  /\b(?:not (?:supported|available|allowed|permitted|found|enabled|authori[sz]ed)|unsupported|unavailable|invalid|unauthori[sz]ed|forbidden|denied|quota|rate[ _-]?limit|exceeded|deprecated|retired|no longer|insufficient|expired|failed|error)\b/i;
+
 /** Keys a bare error body may carry and still be "only an error" (OB-54). */
 const BARE_ERROR_KEYS = new Set([
   "detail",
@@ -282,13 +291,21 @@ function isErrorPayloadObject(payload: unknown): payload is ErrorPayload {
   // Bare error bodies: FastAPI-style {"detail":"…"} (the ChatGPT/Codex backend's
   // plan refusals, OB-54) and {"error":"…"} with a string. Both arrive INSIDE a
   // 200-shaped completion, so this is the only place they can be recognised.
-  // "Bare" is load-bearing: every key must be error-ish, so a structured
-  // answer that happens to carry a `detail` field is still an answer.
-  if (
-    (typeof record.detail === "string" && record.detail.trim()) ||
-    (typeof record.error === "string" && record.error.trim())
-  ) {
-    return Object.keys(record).every((k) => BARE_ERROR_KEYS.has(k));
+  // "Bare" is load-bearing: every key must be error-ish AND the message must
+  // read as a refusal, so a structured answer that happens to use a `detail`
+  // or `error` field is still an answer.
+  const bareMessage =
+    typeof record.detail === "string" && record.detail.trim()
+      ? record.detail
+      : typeof record.error === "string" && record.error.trim()
+        ? record.error
+        : undefined;
+  if (bareMessage !== undefined) {
+    return (
+      Object.keys(record).every((k) => BARE_ERROR_KEYS.has(k)) &&
+      // snake_case codes (model_not_available) must read as words too
+      BARE_ERROR_MESSAGE_RE.test(bareMessage.replace(/[_-]+/g, " "))
+    );
   }
   if (typeof record.request_id === "string" || typeof record.requestId === "string") {
     return true;
