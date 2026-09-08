@@ -124,6 +124,43 @@ describe("subscribeEmbeddedPiSession — provider error reply (OB-54)", () => {
     expect(subscription.getRawErrorReply()).toEqual({ message: "Please retry later", status: 429 });
   });
 
+  it("a refusal whose prefix arrives in a separate delta never leaks the prefix (#159 r4)", () => {
+    for (const [head, rest] of [
+      ["Error", `: ${CODEX_REFUSAL}`],
+      ["429", ` ${CODEX_REFUSAL}`],
+      ["<fin", `al>${CODEX_REFUSAL}</final>`],
+    ] as const) {
+      const { emit, subscription, onBlockReply, onPartialReply } = harness();
+      emitAssistantTextDelta({ emit, delta: head });
+      expect(onPartialReply, head).not.toHaveBeenCalled();
+      expect(onBlockReply, head).not.toHaveBeenCalled();
+      for (let i = 0; i < rest.length; i += 17) {
+        emitAssistantTextDelta({ emit, delta: rest.slice(i, i + 17) });
+      }
+      const full = head + rest;
+      emitAssistantTextEnd({ emit, content: full });
+      emit({
+        type: "message_end",
+        message: { role: "assistant", content: [{ type: "text", text: full }] },
+      });
+      expect(onBlockReply, head).not.toHaveBeenCalled();
+      expect(onPartialReply, head).not.toHaveBeenCalled();
+      expect(subscription.getRawErrorReply()?.message, head).toMatch(/not supported/);
+    }
+  });
+
+  it("an intermediate refusal in a tool loop does not outlive a later normal message (#159 r4)", () => {
+    const { emit, subscription, onBlockReply } = harness({
+      breakAt: "message_end",
+      chunking: false,
+    });
+    emitMessageStartAndEndForAssistantText({ emit, text: CODEX_REFUSAL });
+    expect(subscription.getRawErrorReply()?.message).toMatch(/not supported/);
+    emitMessageStartAndEndForAssistantText({ emit, text: "Done — the file was updated." });
+    expect(subscription.getRawErrorReply()).toBeUndefined();
+    expect(onBlockReply).toHaveBeenCalledTimes(1);
+  });
+
   it("prose still streams chunk by chunk — including prose that starts with Error:", () => {
     const { emit, onBlockReply } = harness();
     emitAssistantTextDelta({

@@ -291,8 +291,11 @@ export function handleMessageEnd(
   // A bare provider error object is recorded for the runner (which fails
   // over), kept in assistantTexts once, and never handed to the channel.
   const rawErrorReply = describeRawErrorReply([text], ctx.params.provider);
+  // Overwritten for EVERY completed assistant message: an intermediate refusal
+  // in a tool loop must not outlive a later message that completed normally
+  // (#159 r4).
+  ctx.state.rawErrorReply = rawErrorReply ?? undefined;
   if (rawErrorReply) {
-    ctx.state.rawErrorReply = rawErrorReply;
     ctx.blockChunker?.reset();
     ctx.state.blockBuffer = "";
     ctx.log.warn(

@@ -51,6 +51,11 @@ describe("describeRawErrorReply (OB-54)", () => {
       message: "nope",
       status: 403,
     });
+    // a leading HTTP code is stripped for the guard and carried as the status (#159 r4)
+    expect(describeRawErrorReply(['429 {"detail":"Please retry later"}'], "venice")).toEqual({
+      message: "Please retry later",
+      status: 429,
+    });
     // a 2xx status, or a bare code, is NOT an error signal
     expect(describeRawErrorReply(['{"detail":"healthy","status":200}'])).toBeNull();
     expect(describeRawErrorReply(['{"error":"ok","code":"OK"}'])).toBeNull();
@@ -102,9 +107,27 @@ describe("looksLikeErrorPayloadStart (the streaming hold)", () => {
     expect(looksLikeErrorPayloadStart('API error: {"error":')).toBe(true);
     expect(looksLikeErrorPayloadStart('429 {"detail":"slow down"}')).toBe(true);
   });
-  it("lets prose stream", () => {
+  it("holds while the text could still become an error prefix (#159 r4)", () => {
+    for (const partial of [
+      "E",
+      "Err",
+      "Error",
+      "Error:",
+      "Error: ",
+      "API err",
+      "429",
+      "42",
+      "<fin",
+      "<final>",
+    ]) {
+      expect(looksLikeErrorPayloadStart(partial), partial).toBe(true);
+    }
+  });
+  it("lets prose stream — including prose that starts like a prefix once it is ruled out", () => {
     expect(looksLikeErrorPayloadStart("Sure — here is the plan:")).toBe(false);
     expect(looksLikeErrorPayloadStart("Error: the file was not found")).toBe(false);
+    expect(looksLikeErrorPayloadStart("Errors happen")).toBe(false);
+    expect(looksLikeErrorPayloadStart("4291 units")).toBe(false);
     expect(looksLikeErrorPayloadStart("")).toBe(false);
     expect(looksLikeErrorPayloadStart("[1,2]")).toBe(false);
   });

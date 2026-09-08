@@ -297,14 +297,46 @@ function errorStatusFromRecord(record: ErrorPayload): number | undefined {
  * (`<final>`, `Error:` / `API error:` prefixes, a leading HTTP code) are
  * looked through here (Codex #159 r3).
  */
+const HOLD_PREFIXES = [
+  "error",
+  "api error",
+  "apierror",
+  "openai error",
+  "anthropic error",
+  "gateway error",
+];
+
 export function looksLikeErrorPayloadStart(text: string): boolean {
-  const t = (text ?? "")
-    .replace(FINAL_TAG_RE, "")
-    .trim()
+  const original = (text ?? "").trim();
+  if (!original) {
+    return false;
+  }
+  const raw = original.replace(FINAL_TAG_RE, "").trim();
+  if (!raw) {
+    // Only tags so far ("<final>") — whatever follows is not known yet: hold.
+    return true;
+  }
+  // A partial "<final" tag: hold until it closes or is ruled out (#159 r4).
+  if (raw.startsWith("<") && raw.length < 8 && "<final>".startsWith(raw.toLowerCase())) {
+    return true;
+  }
+  const head = raw.toLowerCase();
+  // While the text is still a possible prefix of a known error prefix
+  // ("Err", "Error", "429") nothing can be ruled out yet — hold. The
+  // streaming split "Error" | ": {"detail":…}" used to leak the first piece.
+  if (/^\d{1,3}$/.test(head)) {
+    return true;
+  }
+  if (HOLD_PREFIXES.some((p) => p.startsWith(head))) {
+    return true;
+  }
+  const t = raw
     .replace(/^\d{3}\s+/, "")
     .replace(ERROR_PAYLOAD_PREFIX_RE, "")
     .trimStart();
-  return t.startsWith("{");
+  // A complete prefix whose remainder is not (yet) an object: hold while the
+  // remainder is empty, otherwise it is prose ("Error: the file was not found").
+  return t.length === 0 ? t !== raw : t.startsWith("{");
 }
 
 /** The failover reason an HTTP status carries on its own (401/403 auth, 402
@@ -329,7 +361,11 @@ export function failoverReasonFromStatus(status?: number): FailoverReason | null
   return null;
 }
 
-function isErrorPayloadObject(payload: unknown, provider?: string): payload is ErrorPayload {
+function isErrorPayloadObject(
+  payload: unknown,
+  provider?: string,
+  leadingStatus?: number,
+): payload is ErrorPayload {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
     return false;
   }
@@ -360,6 +396,10 @@ function isErrorPayloadObject(payload: unknown, provider?: string): payload is E
     if (errorStatusFromRecord(record) !== undefined) {
       return true;
     }
+    // …or a leading HTTP code the caller already peeled off ("429 {…}").
+    if (leadingStatus !== undefined && leadingStatus >= 400 && leadingStatus <= 599) {
+      return true;
+    }
     return typeof record.detail === "string" && isCodexProvider(provider);
   }
   if (typeof record.request_id === "string" || typeof record.requestId === "string") {
@@ -381,7 +421,11 @@ function isErrorPayloadObject(payload: unknown, provider?: string): payload is E
   return false;
 }
 
-function parseApiErrorPayload(raw: string, provider?: string): ErrorPayload | null {
+function parseApiErrorPayload(
+  raw: string,
+  provider?: string,
+  leadingStatus?: number,
+): ErrorPayload | null {
   if (!raw) {
     return null;
   }
@@ -399,7 +443,7 @@ function parseApiErrorPayload(raw: string, provider?: string): ErrorPayload | nu
     }
     try {
       const parsed = JSON.parse(candidate) as unknown;
-      if (isErrorPayloadObject(parsed, provider)) {
+      if (isErrorPayloadObject(parsed, provider, leadingStatus)) {
         return parsed;
       }
     } catch {
@@ -453,7 +497,8 @@ export function parseApiErrorInfo(raw?: string, provider?: string): ApiErrorInfo
     candidate = httpPrefixMatch[2].trim();
   }
 
-  const payload = parseApiErrorPayload(candidate, provider);
+  const leadingStatus = httpCode ? Number(httpCode) : undefined;
+  const payload = parseApiErrorPayload(candidate, provider, leadingStatus);
   if (!payload) {
     return null;
   }
@@ -518,10 +563,16 @@ export function describeRawErrorReply(
 ): RawErrorReply | null {
   const last = assistantTexts.length ? assistantTexts[assistantTexts.length - 1] : "";
   const trimmed = (last ?? "").trim();
-  if (!trimmed || !isRawApiErrorPayload(trimmed, provider)) {
+  if (!trimmed) {
     return null;
   }
+  // parseApiErrorInfo is the guard: it knows the "Error:" prefixes and peels a
+  // leading HTTP code ("429 {…}"), counting that code as error metadata, and
+  // answers null for anything that is not an error payload (#159 r4).
   const info = parseApiErrorInfo(trimmed, provider);
+  if (!info) {
+    return null;
+  }
   return {
     message: info?.message?.trim() || trimmed,
     ...(info?.status !== undefined ? { status: info.status } : {}),
