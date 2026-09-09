@@ -72,6 +72,17 @@ services:
       # the one the dashboard's Secrets tab suggests, and the skill's `requires.env` gates on it
       # with ALL semantics — a second spelling would hide the skill rather than add a fallback.
       EXA_API_KEY: ${EXA_API_KEY:-}
+      # Phase 2 (dashboard plan docs/plans/active/ceyo-outreach-phase2.md §2.6, C2/C11): the
+      # prospector's five provider keys, and the bound sweep job id. OUTREACH_CRON_JOB is what the
+      # scripts' session gate compares the session key against; ceyo-provision.sh writes it to
+      # docker.env, and it reaches the script process ONLY through this list — absent here, every
+      # gated write (the sweep's own included) fails closed after deploy. Empty for every other agent.
+      OUTREACH_CRON_JOB: ${OUTREACH_CRON_JOB:-}
+      APOLLO_API_KEY: ${APOLLO_API_KEY:-}
+      HUNTER_API_KEY: ${HUNTER_API_KEY:-}
+      DEBOUNCE_API_KEY: ${DEBOUNCE_API_KEY:-}
+      APIFY_TOKEN: ${APIFY_TOKEN:-}
+      LEMLIST_API_KEY: ${LEMLIST_API_KEY:-}
     volumes:
       - ${OPENCLAW_CONFIG_DIR}:/home/node/.openclaw
       - ${OPENCLAW_WORKSPACE_DIR}:/home/node/.openclaw/workspace
@@ -182,6 +193,17 @@ services:
       # the one the dashboard's Secrets tab suggests, and the skill's `requires.env` gates on it
       # with ALL semantics — a second spelling would hide the skill rather than add a fallback.
       EXA_API_KEY: ${EXA_API_KEY:-}
+      # Phase 2 (dashboard plan docs/plans/active/ceyo-outreach-phase2.md §2.6, C2/C11): the
+      # prospector's five provider keys, and the bound sweep job id. OUTREACH_CRON_JOB is what the
+      # scripts' session gate compares the session key against; ceyo-provision.sh writes it to
+      # docker.env, and it reaches the script process ONLY through this list — absent here, every
+      # gated write (the sweep's own included) fails closed after deploy. Empty for every other agent.
+      OUTREACH_CRON_JOB: ${OUTREACH_CRON_JOB:-}
+      APOLLO_API_KEY: ${APOLLO_API_KEY:-}
+      HUNTER_API_KEY: ${HUNTER_API_KEY:-}
+      DEBOUNCE_API_KEY: ${DEBOUNCE_API_KEY:-}
+      APIFY_TOKEN: ${APIFY_TOKEN:-}
+      LEMLIST_API_KEY: ${LEMLIST_API_KEY:-}
     volumes:
       - ${OPENCLAW_CONFIG_DIR}:/home/node/.openclaw
       - ${OPENCLAW_WORKSPACE_DIR}:/home/node/.openclaw/workspace

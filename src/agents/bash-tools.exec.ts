@@ -13,11 +13,12 @@ import { markBackgrounded } from "./bash-process-registry.js";
 import { processGatewayAllowlist } from "./bash-tools.exec-host-gateway.js";
 import { executeNodeHostCommand } from "./bash-tools.exec-host-node.js";
 import {
+  applyPathPrepend,
+  applyShellPath,
   DEFAULT_MAX_OUTPUT,
   DEFAULT_PATH,
   DEFAULT_PENDING_MAX_OUTPUT,
-  applyPathPrepend,
-  applyShellPath,
+  execSchema,
   normalizeExecAsk,
   normalizeExecHost,
   normalizeExecSecurity,
@@ -25,8 +26,9 @@ import {
   renderExecHostLabel,
   resolveApprovalRunningNoticeMs,
   runExecProcess,
-  execSchema,
+  stripOutreachIdentity,
   validateHostEnv,
+  withOutreachIdentity,
 } from "./bash-tools.exec-runtime.js";
 import type {
   ExecElevatedDefaults,
@@ -330,7 +332,13 @@ export function createExecTool(
         validateHostEnv(params.env);
       }
 
-      const mergedEnv = params.env ? { ...baseEnv, ...params.env } : baseEnv;
+      // Outreach session identity (C10/C17): the three authorization names are stripped from the
+      // model's env before the merge and the runtime's values re-asserted after it.
+      const paramsEnv = params.env ? stripOutreachIdentity(params.env) : undefined;
+      const mergedEnv = withOutreachIdentity(
+        paramsEnv ? { ...baseEnv, ...paramsEnv } : baseEnv,
+        defaults?.sessionKey,
+      );
 
       const env = sandbox
         ? buildSandboxEnv({
