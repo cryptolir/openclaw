@@ -50,6 +50,46 @@ const DANGEROUS_HOST_ENV_VARS = new Set([
 ]);
 const DANGEROUS_HOST_ENV_PREFIXES = ["DYLD_", "LD_"];
 
+/**
+ * Outreach session identity — dashboard plan docs/plans/active/ceyo-outreach-phase2.md §2.6
+ * (findings C2, C10, C17). The Ceyo outreach skill scripts gate every write and every paid
+ * provider call on two things the runtime knows and the model does not control: the session
+ * key's `:cron:<id>` segment (compared with the provisioned sweep job id, OUTREACH_CRON_JOB) and
+ * the Role (OUTREACH_ROLE). All three are authorization inputs. `params.env` is model-controlled
+ * and is merged OVER the base environment, so the model could set matching fabricated values and
+ * pass the scripts' equality check — the gate would be comparing values the model wrote. So the
+ * three names are stripped from `params.env` before the merge and the runtime's values are
+ * re-asserted after it (last write wins). Reads stay ungated; nothing else in the env changes.
+ * On an agent that is not an outreach Agent the two OUTREACH_* values are empty strings.
+ */
+export const OUTREACH_IDENTITY_VARS = [
+  "OPENCLAW_SESSION_KEY",
+  "OUTREACH_CRON_JOB",
+  "OUTREACH_ROLE",
+] as const;
+
+export function stripOutreachIdentity(env: Record<string, string>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(env)) {
+    if (!(OUTREACH_IDENTITY_VARS as readonly string[]).includes(key.toUpperCase())) {
+      out[key] = value;
+    }
+  }
+  return out;
+}
+
+export function withOutreachIdentity(
+  env: Record<string, string>,
+  sessionKey: string | undefined,
+): Record<string, string> {
+  return {
+    ...env,
+    OPENCLAW_SESSION_KEY: sessionKey?.trim() ?? "",
+    OUTREACH_CRON_JOB: process.env.OUTREACH_CRON_JOB ?? "",
+    OUTREACH_ROLE: process.env.OUTREACH_ROLE ?? "",
+  };
+}
+
 // Centralized sanitization helper.
 // Throws an error if dangerous variables or PATH modifications are detected on the host.
 export function validateHostEnv(env: Record<string, string>): void {
