@@ -12,13 +12,31 @@ const FABRICATED = {
   OPENCLAW_SESSION_KEY: "agent:x:cron:JOB1:run:9",
   OUTREACH_CRON_JOB: "JOB1",
   OUTREACH_ROLE: "verifier",
+  // Provenance a model would love to choose for itself: an old prompt hash and a better model.
+  OUTREACH_PROMPT_VERSION: "0000deadbeef",
+  OUTREACH_MODEL_ID: "some-other-model (configured)",
   PATH: "/model/path",
   FOO: "bar",
 };
 
 describe("outreach session identity (C10/C17)", () => {
-  const saved = { job: process.env.OUTREACH_CRON_JOB, role: process.env.OUTREACH_ROLE };
+  const saved = {
+    job: process.env.OUTREACH_CRON_JOB,
+    role: process.env.OUTREACH_ROLE,
+    pv: process.env.OUTREACH_PROMPT_VERSION,
+    model: process.env.OUTREACH_MODEL_ID,
+  };
   afterEach(() => {
+    for (const [name, was] of [
+      ["OUTREACH_PROMPT_VERSION", saved.pv],
+      ["OUTREACH_MODEL_ID", saved.model],
+    ] as const) {
+      if (was === undefined) {
+        delete process.env[name];
+      } else {
+        process.env[name] = was;
+      }
+    }
     if (saved.job === undefined) {
       delete process.env.OUTREACH_CRON_JOB;
     } else {
@@ -31,18 +49,43 @@ describe("outreach session identity (C10/C17)", () => {
     }
   });
 
-  it("strips exactly the three names from a model-controlled env, in any case, and nothing else", () => {
+  it("strips exactly the five names from a model-controlled env, in any case, and nothing else", () => {
     const out = stripOutreachIdentity({
       ...FABRICATED,
       outreach_role: "x",
       Openclaw_Session_Key: "y",
+      outreach_model_id: "z",
     });
     expect(Object.keys(out).toSorted()).toEqual(["FOO", "PATH"]);
     expect(OUTREACH_IDENTITY_VARS).toEqual([
       "OPENCLAW_SESSION_KEY",
       "OUTREACH_CRON_JOB",
       "OUTREACH_ROLE",
+      "OUTREACH_PROMPT_VERSION",
+      "OUTREACH_MODEL_ID",
     ]);
+  });
+
+  it("a model cannot sign a decision with provenance it chose (dashboard #565)", () => {
+    // The two provenance names gate nothing, which is exactly why they were missed. They are the
+    // record a reviewer trusts to be machine-derived: which prompt files and which model produced
+    // a decision. A model that could set them would forge that record undetectably.
+    process.env.OUTREACH_PROMPT_VERSION = "abc123realpv";
+    process.env.OUTREACH_MODEL_ID = "venice/real-model (configured)";
+    const merged = withOutreachIdentity(
+      { HOME: "/h", ...stripOutreachIdentity(FABRICATED) },
+      "main",
+    );
+    expect(merged.OUTREACH_PROMPT_VERSION).toBe("abc123realpv");
+    expect(merged.OUTREACH_MODEL_ID).toBe("venice/real-model (configured)");
+  });
+
+  it("an agent with no provenance in its own env gets empty strings, never the model's", () => {
+    delete process.env.OUTREACH_PROMPT_VERSION;
+    delete process.env.OUTREACH_MODEL_ID;
+    const merged = withOutreachIdentity(stripOutreachIdentity(FABRICATED), "main");
+    expect(merged.OUTREACH_PROMPT_VERSION).toBe("");
+    expect(merged.OUTREACH_MODEL_ID).toBe("");
   });
 
   it("a matching fabrication in params.env loses to the runtime's values after the merge", () => {
@@ -71,11 +114,22 @@ describe("outreach session identity (C10/C17)", () => {
     expect(merged.OUTREACH_ROLE).toBe("researcher");
   });
 
-  it("on a non-outreach agent the two OUTREACH_* values are empty strings, never undefined", () => {
+  it("on a non-outreach agent every OUTREACH_* value is an empty string, never undefined", () => {
     delete process.env.OUTREACH_CRON_JOB;
     delete process.env.OUTREACH_ROLE;
+    delete process.env.OUTREACH_PROMPT_VERSION;
+    delete process.env.OUTREACH_MODEL_ID;
     const merged = withOutreachIdentity({}, undefined);
-    expect(merged).toEqual({ OPENCLAW_SESSION_KEY: "", OUTREACH_CRON_JOB: "", OUTREACH_ROLE: "" });
+    // Exact shape on purpose: a name added to OUTREACH_IDENTITY_VARS but forgotten in
+    // withOutreachIdentity would be stripped from params.env and never re-asserted, so the
+    // script would see nothing at all rather than the runtime's value.
+    expect(merged).toEqual({
+      OPENCLAW_SESSION_KEY: "",
+      OUTREACH_CRON_JOB: "",
+      OUTREACH_ROLE: "",
+      OUTREACH_PROMPT_VERSION: "",
+      OUTREACH_MODEL_ID: "",
+    });
   });
 
   it("is wired in at the exec merge, not only defined", () => {
