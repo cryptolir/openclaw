@@ -78,6 +78,17 @@ services:
       # docker.env, and it reaches the script process ONLY through this list — absent here, every
       # gated write (the sweep's own included) fails closed after deploy. Empty for every other agent.
       OUTREACH_CRON_JOB: ${OUTREACH_CRON_JOB:-}
+      # Stage provenance (dashboard #565; the failure that found this, #569 rollout,
+      # measured 2026-09-10). `ceyo-provision.sh` derives both and writes them to the agent's
+      # docker.env — OUTREACH_PROMPT_VERSION is a content hash of the Role's deployed prompt
+      # files, OUTREACH_MODEL_ID is the CONFIGURED primary model, stored with the literal
+      # marker "(configured)" because fallback stays on and nothing reports which model
+      # answered (calibration D15). Same allowlist rule as OUTREACH_CRON_JOB above: absent
+      # here they never reach the script process, and every write that records a decision
+      # fails closed with exit 2 — which is exactly what happened: docker.env carried both,
+      # `docker inspect` showed neither, and the re-provisioned agent refused its own sweep.
+      OUTREACH_PROMPT_VERSION: ${OUTREACH_PROMPT_VERSION:-}
+      OUTREACH_MODEL_ID: ${OUTREACH_MODEL_ID:-}
       APOLLO_API_KEY: ${APOLLO_API_KEY:-}
       HUNTER_API_KEY: ${HUNTER_API_KEY:-}
       DEBOUNCE_API_KEY: ${DEBOUNCE_API_KEY:-}
@@ -199,6 +210,17 @@ services:
       # docker.env, and it reaches the script process ONLY through this list — absent here, every
       # gated write (the sweep's own included) fails closed after deploy. Empty for every other agent.
       OUTREACH_CRON_JOB: ${OUTREACH_CRON_JOB:-}
+      # Stage provenance (dashboard #565; the failure that found this, #569 rollout,
+      # measured 2026-09-10). `ceyo-provision.sh` derives both and writes them to the agent's
+      # docker.env — OUTREACH_PROMPT_VERSION is a content hash of the Role's deployed prompt
+      # files, OUTREACH_MODEL_ID is the CONFIGURED primary model, stored with the literal
+      # marker "(configured)" because fallback stays on and nothing reports which model
+      # answered (calibration D15). Same allowlist rule as OUTREACH_CRON_JOB above: absent
+      # here they never reach the script process, and every write that records a decision
+      # fails closed with exit 2 — which is exactly what happened: docker.env carried both,
+      # `docker inspect` showed neither, and the re-provisioned agent refused its own sweep.
+      OUTREACH_PROMPT_VERSION: ${OUTREACH_PROMPT_VERSION:-}
+      OUTREACH_MODEL_ID: ${OUTREACH_MODEL_ID:-}
       APOLLO_API_KEY: ${APOLLO_API_KEY:-}
       HUNTER_API_KEY: ${HUNTER_API_KEY:-}
       DEBOUNCE_API_KEY: ${DEBOUNCE_API_KEY:-}
