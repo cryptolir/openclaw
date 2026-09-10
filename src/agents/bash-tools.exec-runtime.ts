@@ -58,14 +58,23 @@ const DANGEROUS_HOST_ENV_PREFIXES = ["DYLD_", "LD_"];
  * the Role (OUTREACH_ROLE). All three are authorization inputs. `params.env` is model-controlled
  * and is merged OVER the base environment, so the model could set matching fabricated values and
  * pass the scripts' equality check — the gate would be comparing values the model wrote. So the
- * three names are stripped from `params.env` before the merge and the runtime's values are
+ * names below are stripped from `params.env` before the merge and the runtime's values are
  * re-asserted after it (last write wins). Reads stay ungated; nothing else in the env changes.
- * On an agent that is not an outreach Agent the two OUTREACH_* values are empty strings.
+ * On an agent that is not an outreach Agent the OUTREACH_* values are empty strings.
+ *
+ * OUTREACH_PROMPT_VERSION and OUTREACH_MODEL_ID (dashboard #565) belong here for the same reason
+ * even though they gate nothing: they are the PROVENANCE the scripts stamp on every decision —
+ * which prompt files and which model produced it — and the design they implement says in as many
+ * words that they are written by provisioning and never by the model. Left out, a model could set
+ * its own values in `params.env` and sign a decision with any prompt version and any model it
+ * liked, permanently and undetectably, in the one record a reviewer trusts to be machine-derived.
  */
 export const OUTREACH_IDENTITY_VARS = [
   "OPENCLAW_SESSION_KEY",
   "OUTREACH_CRON_JOB",
   "OUTREACH_ROLE",
+  "OUTREACH_PROMPT_VERSION",
+  "OUTREACH_MODEL_ID",
 ] as const;
 
 export function stripOutreachIdentity(env: Record<string, string>): Record<string, string> {
@@ -87,6 +96,8 @@ export function withOutreachIdentity(
     OPENCLAW_SESSION_KEY: sessionKey?.trim() ?? "",
     OUTREACH_CRON_JOB: process.env.OUTREACH_CRON_JOB ?? "",
     OUTREACH_ROLE: process.env.OUTREACH_ROLE ?? "",
+    OUTREACH_PROMPT_VERSION: process.env.OUTREACH_PROMPT_VERSION ?? "",
+    OUTREACH_MODEL_ID: process.env.OUTREACH_MODEL_ID ?? "",
   };
 }
 
