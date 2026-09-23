@@ -26,6 +26,7 @@
 #   prune-gateway-images.sh [KEEP_RECENT] [--dry-run]
 #     KEEP_RECENT  most-recent tags per repo to always keep (default 2)
 #     --dry-run    report what would be removed; remove nothing
+#   Exit: 0 ok · 2 bad arg / no docker · 3 still under MIN_FREE_GB free afterwards
 #
 set -uo pipefail
 
@@ -124,3 +125,16 @@ fi
 
 AFTER=$(df -h / | awk 'NR==2{print $4" free, "$5" used"}')
 echo "prune-gateway-images: removed ${removed} tag(s); disk: ${BEFORE} -> ${AFTER}"
+
+# Say so plainly when pruning could not make room. For 10 days (Sep 2026) the
+# daily run printed "removed 0 tag(s)" against a 92% disk — the same words as a
+# quiet day — and exited 0. Exit 3 is the caller's cue to escalate.
+# ponytail: fixed floor = one ~8.7 G gateway image pull + margin; derive it from
+# `docker image inspect` if images outgrow it. Keep equal to DISK_FREE_CRIT_GB
+# in agents_server_diagnostic.sh.
+MIN_FREE_GB=10
+free_gb=$(df -P / | awk 'END{print int($4/1048576)}')
+if [[ "$free_gb" -lt "$MIN_FREE_GB" ]]; then
+  echo "prune: DISK STILL LOW — ${free_gb}G free after this run; the next gateway image pull needs ~${MIN_FREE_GB}G and nothing left is safe for this script to remove. A person has to look."
+  exit 3
+fi

@@ -113,6 +113,33 @@ else
   fi
 fi
 
+# 1.5 Prune old, UNUSED openclaw images + build cache on each agent host BEFORE
+#     the scan, so the scan measures what is left: a disk finding in the report
+#     then means "still short after cleanup", not "was short for half a minute"
+#     (this ran after the scan until Sep 2026, so the email could report a P0 the
+#     prune had just fixed). Each roll pulls a ~8.7 G image; a pull failed "no
+#     space left" on the US host on 2026-06-18. The prune keeps in-use tags + the
+#     3 most-recent per repo; registry tags are re-pullable, so removing a local
+#     copy is non-destructive. Its output goes into the EMAIL — it used to reach
+#     only /var/log, where "removed 0 tag(s)" against a 92% disk went unread for
+#     10 days. Exit 3 = still too little room after pruning → SUBJECT.
+PRUNE_REPORT=""
+DISK_ALERTS=""
+for H in 89.167.70.46 5.161.84.219; do
+  echo "── gateway-image prune: root@$H ──"
+  out="$(ssh -i "$SSH_KEY" -o ConnectTimeout=15 -o BatchMode=yes "root@$H" 'bash -s -- 3' \
+    < "$REPO/scripts/ops/prune-gateway-images.sh" 2>&1)"
+  rc=$?
+  case "$rc" in
+    0)   ;;
+    3)   DISK_ALERTS="${DISK_ALERTS}⚠ $H: $(printf '%s\n' "$out" | grep -m1 'DISK STILL LOW')"$'\n' ;;
+    255) out="${out}"$'\n'"WARN: gateway-image prune skipped for $H (ssh failed)" ;;
+    *)   out="${out}"$'\n'"WARN: gateway-image prune on $H exited $rc" ;;
+  esac
+  echo "$out"
+  PRUNE_REPORT="${PRUNE_REPORT}── $H ──"$'\n'"${out}"$'\n'
+done
+
 # 2. Run the scan (writes the AUTOSCAN block) and capture the full report.
 REPORT="$(/bin/bash scripts/ops/agents_server_diagnostic.sh --bug-list "$BUG_LIST" all 2>&1)"
 echo "$REPORT"
@@ -134,20 +161,6 @@ for H in 89.167.70.46 5.161.84.219; do
     printf "%s\n" "$FILES" | xargs -I{} mv {} "$ARCHIVE/"
     echo "→ cruft-archive: moved $N item(s) to $ARCHIVE"
   ' 2>/dev/null || echo "WARN: cruft-archive skipped for $H (ssh failed)"
-done
-
-# 2.6 Prune old, UNUSED gateway images on each agent host so a roll never fails
-#     on disk (image drift: each roll pulls a ~8.5 G image; the US host hit 97%
-#     and a pull failed "no space left" on 2026-06-18). prune-gateway-images.sh
-#     first removes exited `*-openclaw-cli-1` one-shots (they pin stale tags
-#     through the in-use guard), then keeps in-use tags + the 3 most-recent
-#     (rollback depth for both the fleet + life image tracks); all tags are
-#     re-pullable from Artifact Registry, so removing a local copy is non-destructive.
-for H in 89.167.70.46 5.161.84.219; do
-  echo "── gateway-image prune: root@$H ──"
-  ssh -i "$SSH_KEY" -o ConnectTimeout=15 -o BatchMode=yes "root@$H" 'bash -s -- 3' \
-    < "$REPO/scripts/ops/prune-gateway-images.sh" 2>/dev/null \
-    || echo "WARN: gateway-image prune skipped for $H (ssh failed)"
 done
 
 # 3. Commit + push the refreshed bug list in the dashboard repo (only if it
@@ -230,6 +243,9 @@ SUBJECT="[AgentGlob] Fleet diagnostic $(date +%F) — ${COUNTS:-scan complete}"
 # A sync failure means the findings below never reached the repo. Put it in the
 # SUBJECT: the log line alone went unread for 53 runs.
 [[ -n "$SYNC_WARNINGS" ]] && SUBJECT="⚠ SYNC FAILED — $SUBJECT"
+# A disk the prune could not clear fails the next roll. The P0 count alone never
+# got it acted on — other P0s keep that count above zero — so name it.
+[[ -n "$DISK_ALERTS" ]] && SUBJECT="⚠ DISK — next image pull will fail — $SUBJECT"
 if command -v msmtp >/dev/null 2>&1; then
   {
     printf 'Subject: %s\n' "$SUBJECT"
@@ -239,7 +255,11 @@ if command -v msmtp >/dev/null 2>&1; then
     if [[ -n "$SYNC_WARNINGS" ]]; then
       printf '═══════ ⚠ AUTOSCAN SYNC FAILED ═══════\n%s\nThe findings below were produced but may NOT be committed to bug_list.md.\nSee /var/log/agentglob-diag.log\n\n' "$SYNC_WARNINGS"
     fi
+    if [[ -n "$DISK_ALERTS" ]]; then
+      printf '═══════ ⚠ DISK: THE NEXT IMAGE PULL WILL FAIL ═══════\n%s\nThe image prune ran and could not make room — nothing left is safe for it to remove.\nFind what else is filling the disk; the prune output is right after the scan report.\n\n' "$DISK_ALERTS"
+    fi
     printf '%s\n\n' "$REPORT"
+    printf '═══════ IMAGE PRUNE (ran before the scan) ═══════\n%s\n' "$PRUNE_REPORT"
     MODELS_REPORT_FILE=/var/tmp/agentglob-models-report.txt
     if [[ -f "$MODELS_REPORT_FILE" && -n "$(find "$MODELS_REPORT_FILE" -mmin -360 2>/dev/null)" ]]; then
       printf '═══════ MODEL CONNECTIVITY (05:50 UTC run) ═══════\n%s\n\n' "$(cat "$MODELS_REPORT_FILE")"
