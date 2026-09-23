@@ -16,14 +16,14 @@
 # Known failure signatures it recognises (learned from real incidents):
 #   - gateway not listening / container not running .............. P0
 #   - container "Restarting" (crash loop) ....................... P0
-#   - disk >= DISK_CRIT% ........................................ P0
+#   - disk free < DISK_FREE_CRIT_GB (next image pull fails) ..... P0
 #   - OOM kill in kernel log .................................... P1
 #   - low memory headroom / no swap / heavy swap use ............ P1
 #   - uncaught EPIPE / plugin (mcp-bridge) crash ................ P1
 #   - model not responding (typing-TTL / no-reply / timeout) .... P1
 #   - auth/token failure (401, setMyCommands) ................... P1
 #   - provider model-discovery timeout (e.g. venice) ............ P2
-#   - disk >= DISK_WARN% ........................................ P2
+#   - disk free < DISK_FREE_WARN_GB (one image pull left) ....... P2
 #   - no docker log rotation (unbounded logs) ................... P2
 #   - docker.env key not reaching the container ................. P2
 #   - SECRETS CONTAINMENT: container can read a non-empty secrets
@@ -54,8 +54,12 @@ host_label() { case "$1" in eu) echo "1stClaw/EU";; us) echo "2ndClaw/US";; *) e
 ALL_HOSTS="eu us"
 
 # ── Thresholds (tune here) ───────────────────────────────────────────────────
-DISK_WARN=80          # % root fs used → P2
-DISK_CRIT=90          # % root fs used → P0
+# Disk is judged in GB FREE, not % used: what breaks is the next gateway image
+# pull (~8.7 G), and on a 75 G disk "90% used" is 7.5 G free — already too small
+# for one, so the old P0 only fired once a roll could no longer succeed.
+# Keep DISK_FREE_CRIT_GB equal to MIN_FREE_GB in prune-gateway-images.sh.
+DISK_FREE_WARN_GB=20  # GB free → P2 below this (room for one more pull, not two)
+DISK_FREE_CRIT_GB=10  # GB free → P0 below this (the next image pull fails)
 MEM_AVAIL_WARN=500    # MiB available → P1 below this
 SWAP_USED_WARN=1024   # MiB swap in use → P1 above this (thrashing)
 LOG_SINCE="30m"       # gateway-log lookback window
@@ -117,7 +121,7 @@ remote_probe() {
   local name="$1" ip="$2"
   ssh -i "$SSH_KEY" -o ConnectTimeout=15 -o BatchMode=yes -o StrictHostKeyChecking=accept-new \
       "root@${ip}" \
-      "HOST_NAME='${name}' LOG_SINCE='${LOG_SINCE}' DISK_WARN='${DISK_WARN}' DISK_CRIT='${DISK_CRIT}' MEM_AVAIL_WARN='${MEM_AVAIL_WARN}' SWAP_USED_WARN='${SWAP_USED_WARN}' SESSION_DIR_WARN_MB='${SESSION_DIR_WARN_MB}' WORKSPACE_DIR_WARN_MB='${WORKSPACE_DIR_WARN_MB}' ENV_FORWARD_IGNORE='${ENV_FORWARD_IGNORE}' bash -s" 2>/dev/null <<'REMOTE'
+      "HOST_NAME='${name}' LOG_SINCE='${LOG_SINCE}' DISK_FREE_WARN_GB='${DISK_FREE_WARN_GB}' DISK_FREE_CRIT_GB='${DISK_FREE_CRIT_GB}' MEM_AVAIL_WARN='${MEM_AVAIL_WARN}' SWAP_USED_WARN='${SWAP_USED_WARN}' SESSION_DIR_WARN_MB='${SESSION_DIR_WARN_MB}' WORKSPACE_DIR_WARN_MB='${WORKSPACE_DIR_WARN_MB}' ENV_FORWARD_IGNORE='${ENV_FORWARD_IGNORE}' bash -s" 2>/dev/null <<'REMOTE'
 set -uo pipefail
 H="${HOST_NAME:-?}"
 em(){ printf '%s\n' "$*"; }
@@ -143,10 +147,11 @@ else
 fi
 
 diskpct=$(df -P / | awk 'END{gsub("%","",$5); print $5}')
-dst=ok; [ "$diskpct" -ge "$DISK_WARN" ] && dst=warn; [ "$diskpct" -ge "$DISK_CRIT" ] && dst=crit
-em "METRIC|$H|disk_root|${diskpct}%|$dst"
-[ "$diskpct" -ge "$DISK_CRIT" ] && em "ISSUE|P0|$H|-|Disk almost full|Root fs ${diskpct}% used (crit>=${DISK_CRIT}%)."
-[ "$diskpct" -ge "$DISK_WARN" ] && [ "$diskpct" -lt "$DISK_CRIT" ] && em "ISSUE|P2|$H|-|Disk filling|Root fs ${diskpct}% used (warn>=${DISK_WARN}%)."
+diskfree=$(df -P / | awk 'END{print int($4/1048576)}')   # whole GB free (df -P: 1K blocks)
+dst=ok; [ "$diskfree" -lt "$DISK_FREE_WARN_GB" ] && dst=warn; [ "$diskfree" -lt "$DISK_FREE_CRIT_GB" ] && dst=crit
+em "METRIC|$H|disk_root|${diskpct}% (${diskfree}G free)|$dst"
+[ "$diskfree" -lt "$DISK_FREE_CRIT_GB" ] && em "ISSUE|P0|$H|-|Disk almost full|${diskfree}G free (${diskpct}% used) — the next gateway image pull needs ~${DISK_FREE_CRIT_GB}G, so the next roll will fail on disk."
+[ "$diskfree" -lt "$DISK_FREE_WARN_GB" ] && [ "$diskfree" -ge "$DISK_FREE_CRIT_GB" ] && em "ISSUE|P2|$H|-|Disk filling|${diskfree}G free (${diskpct}% used) — room for one more gateway image pull, not two (warn<${DISK_FREE_WARN_GB}G)."
 
 if [ ! -f /etc/docker/daemon.json ] || ! grep -q max-size /etc/docker/daemon.json 2>/dev/null; then
   em "ISSUE|P2|$H|-|No docker log rotation|/etc/docker/daemon.json lacks max-size; container logs grow unbounded (disk-fill risk on a crash loop)."
