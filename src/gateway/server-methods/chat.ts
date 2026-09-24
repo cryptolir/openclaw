@@ -28,6 +28,7 @@ import {
   errorShape,
   formatValidationErrors,
   validateChatAbortParams,
+  validateChatResultParams,
   validateChatHistoryParams,
   validateChatInjectParams,
   validateChatSendParams,
@@ -663,6 +664,42 @@ export const chatHandlers: GatewayRequestHandlers = {
       verboseLevel,
     });
   },
+  /**
+   * Collect a finished run by id.
+   *
+   * A web-chat turn can outlive the browser's request; the gateway finishes it
+   * regardless and retains the result briefly, so the page can come back for it
+   * instead of being told the message failed.
+   *
+   * ⚠️ `sessionKey` is the authorization, not `runId`. A runId is
+   * `Math.random()`-derived on the dashboard side and guessable. Every miss —
+   * no such run, wrong session, expired — returns the same `unknown`, so this
+   * cannot be used to probe which runs exist. All of that lives in
+   * `chat-run-results.ts`, which is tested; this only relays it.
+   */
+  "chat.result": ({ params, respond, context }) => {
+    if (!validateChatResultParams(params)) {
+      respond(
+        false,
+        undefined,
+        errorShape(
+          ErrorCodes.INVALID_REQUEST,
+          `invalid chat.result params: ${formatValidationErrors(validateChatResultParams.errors)}`,
+        ),
+      );
+      return;
+    }
+    const { sessionKey: rawSessionKey, runId } = params as {
+      sessionKey: string;
+      runId: string;
+    };
+    // `chat.send` stores under loadSessionEntry's CANONICAL key ("main" becomes
+    // agent:main:main), so a caller polling with the same raw alias it sent
+    // would miss its own result and recovery would silently fail for exactly
+    // the alias-based clients this feature exists for. Canonicalize here too.
+    const { canonicalKey } = loadSessionEntry(rawSessionKey);
+    respond(true, context.chatRunResults.lookup(runId, canonicalKey));
+  },
   "chat.abort": ({ params, respond, context }) => {
     if (!validateChatAbortParams(params)) {
       respond(
@@ -1039,6 +1076,15 @@ export const chatHandlers: GatewayRequestHandlers = {
               sessionKey: rawSessionKey,
               message,
             });
+            // Retain this non-agent terminal path too: it produces a real reply
+            // without ever reaching emitChatFinal, so without this a caller
+            // whose request timed out would poll `unknown` for ever. Stored
+            // under the CANONICAL key, which is what chat.result looks up.
+            context.chatRunResults.finish(clientRunId, {
+              sessionKey,
+              state: "final",
+              text: combinedReply,
+            });
           }
           context.dedupe.set(`chat:${clientRunId}`, {
             ts: Date.now(),
@@ -1062,6 +1108,14 @@ export const chatHandlers: GatewayRequestHandlers = {
             context,
             runId: clientRunId,
             sessionKey: rawSessionKey,
+            errorMessage: String(err),
+          });
+          // Same non-agent terminal path, failing. A confirmed failure must be
+          // collectable so a poller stops, rather than retrying a dead run.
+          context.chatRunResults.finish(clientRunId, {
+            sessionKey,
+            state: "error",
+            text: "",
             errorMessage: String(err),
           });
         })
