@@ -67,6 +67,10 @@ services:
       AIRTABLE_REVIEWS_BASE_ID: ${AIRTABLE_REVIEWS_BASE_ID:-}
       OUTREACH_ROLE: ${OUTREACH_ROLE:-}
       HUBSPOT_TOKEN: ${HUBSPOT_TOKEN:-}
+      # social-bob's Customer check (dashboard plan docs/plans/active/social-bob-customer-check.md
+      # §2.5): a SEPARATE write key (tickets + contacts) under its own name, so a read-only Agent
+      # never holds it under HUBSPOT_TOKEN. Same allowlist rule: empty for every other agent.
+      HUBSPOT_TICKETS_TOKEN: ${HUBSPOT_TICKETS_TOKEN:-}
       # EXA_API_KEY is the scout's company finder (exa-search skill). Read-only: the script it
       # backs has one hardcoded endpoint and no verb that writes or looks a person up. The name is
       # the one the dashboard's Secrets tab suggests, and the skill's `requires.env` gates on it
@@ -199,6 +203,10 @@ services:
       AIRTABLE_REVIEWS_BASE_ID: ${AIRTABLE_REVIEWS_BASE_ID:-}
       OUTREACH_ROLE: ${OUTREACH_ROLE:-}
       HUBSPOT_TOKEN: ${HUBSPOT_TOKEN:-}
+      # social-bob's Customer check (dashboard plan docs/plans/active/social-bob-customer-check.md
+      # §2.5): a SEPARATE write key (tickets + contacts) under its own name, so a read-only Agent
+      # never holds it under HUBSPOT_TOKEN. Same allowlist rule: empty for every other agent.
+      HUBSPOT_TICKETS_TOKEN: ${HUBSPOT_TICKETS_TOKEN:-}
       # EXA_API_KEY is the scout's company finder (exa-search skill). Read-only: the script it
       # backs has one hardcoded endpoint and no verb that writes or looks a person up. The name is
       # the one the dashboard's Secrets tab suggests, and the skill's `requires.env` gates on it
