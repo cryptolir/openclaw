@@ -336,8 +336,14 @@ describe("resolveModel", () => {
     expectUnknownModelError("google-antigravity", "claude-opus-4-6");
   });
 
-  it("keeps unknown-model errors for non-gpt-5 openai-codex ids", () => {
-    expectUnknownModelError("openai-codex", "gpt-4.1-mini");
+  it("resolves non-gpt-5 openai-codex ids via codex forward-compat (#156)", () => {
+    const result = resolveModel("openai-codex", "gpt-4.1-mini", "/tmp/agent");
+    expect(result.error).toBeUndefined();
+    expect(result.model).toMatchObject({
+      provider: "openai-codex",
+      id: "gpt-4.1-mini",
+      api: "openai-codex-responses",
+    });
   });
 
   it("uses codex fallback even when openai-codex provider is configured", () => {
