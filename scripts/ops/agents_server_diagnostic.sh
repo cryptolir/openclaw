@@ -15,6 +15,7 @@
 #
 # Known failure signatures it recognises (learned from real incidents):
 #   - gateway not listening / container not running .............. P0
+#     (not if On hold: a user stopped it from the dashboard ..... HOLD)
 #   - container "Restarting" (crash loop) ....................... P0
 #   - disk free < DISK_FREE_CRIT_GB (next image pull fails) ..... P0
 #   - OOM kill in kernel log .................................... P1
@@ -118,7 +119,7 @@ done
 
 # ── Remote probe ─────────────────────────────────────────────────────────────
 # Runs on each host as root. Emits machine-readable lines on stdout:
-#   METRIC|<host>|<name>|<value>|<ok|warn|crit>
+#   METRIC|<host>|<name>|<value>|<ok|warn|crit|hold>
 #   ISSUE|<P0|P1|P2|P3>|<host>|<agent|->|<title>|<detail>
 remote_probe() {
   local name="$1" ip="$2"
@@ -172,8 +173,18 @@ for cname in $(docker ps -a --format '{{.Names}}' | grep -- '-openclaw-gateway-1
   envf="/root/.openclaw/agents/${agent}/docker.env"
   gwport=$(grep -E '^OPENCLAW_GATEWAY_PORT=' "$envf" 2>/dev/null | cut -d= -f2)
 
-  cst=ok; [ "$status" != running ] && cst=crit
-  em "METRIC|$H|agent:${agent}|${status} restarts=${restarts} port=${gwport:-?}|$cst"
+  # On hold: a user stopped it from the dashboard (Agent page Stop, Board power
+  # OFF) and openclaw-dashboard lib/agent-control.ts left this marker. It counts
+  # only if newer than the container's last start, so a stale marker never
+  # hides a later crash. The path is duplicated there; change both together.
+  hold=""; _hf="/root/.openclaw/on-hold/${cname}"
+  _sa=$(docker inspect -f '{{.State.StartedAt}}' "$cname" 2>/dev/null)
+  if [ "$status" != running ] && [ -n "$_sa" ] && [ -n "$(find "$_hf" -newermt "$_sa" 2>/dev/null)" ]; then
+    hold=" (on hold since $(date -r "$_hf" +%F))"
+  fi
+
+  cst=ok; [ "$status" != running ] && cst=crit; [ -n "$hold" ] && cst=hold
+  em "METRIC|$H|agent:${agent}|${status}${hold} restarts=${restarts} port=${gwport:-?}|$cst"
 
   # Restart-count delta vs the previous scan, keyed on container ID so a
   # recreate (new ID, counter reset to 0) starts a fresh baseline instead of
@@ -188,7 +199,7 @@ for cname in $(docker ps -a --format '{{.Names}}' | grep -- '-openclaw-gateway-1
   fi
 
   if [ "$status" != running ]; then
-    em "ISSUE|P0|$H|$agent|Agent not running|Container status='${status}' (expected running)."
+    [ -z "$hold" ] && em "ISSUE|P0|$H|$agent|Agent not running|Container status='${status}' (expected running)."
     continue
   fi
   case "$(docker ps --filter "name=^${cname}$" --format '{{.Status}}')" in
@@ -418,7 +429,7 @@ echo; echo "════════ A+B. SERVER HEALTH & AGENT STATUS ═══
 for h in $SELECT; do
   echo; echo "── $(host_label "$h") ($(host_ip "$h")) ──"
   grep "^METRIC|$h|" "$TMP" | while IFS='|' read -r _ host name value st; do
-    mark='  ok '; [ "$st" = warn ] && mark=' WARN'; [ "$st" = crit ] && mark=' CRIT'
+    mark='  ok '; [ "$st" = warn ] && mark=' WARN'; [ "$st" = crit ] && mark=' CRIT'; [ "$st" = hold ] && mark=' HOLD'
     printf '  [%s] %-30s %s\n' "$mark" "$name" "$value"
   done
 done
