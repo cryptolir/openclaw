@@ -238,7 +238,7 @@ export const HYPERLIQUID_TOOLS: ToolDef[] = [
   {
     name: "hl_swap",
     description:
-      "Convert a stablecoin held on the spot side — USDH, USDT0 or USDE — into USDC, so it can back perp trades. Only those three coins, only into USDC, and never below 0.99 USDC per coin: if no buyer pays that much, nothing sells. This is not spot trading and cannot buy any other coin. Minimum 10. It can fill partly — report soldSz and usdcReceived, not the amount asked for. Counts against the owner-set daily limit; only what actually sold is charged.",
+      "Convert a stablecoin held on the spot side — USDH, USDT0 or USDE — into USDC, so it can back perp trades. Only those three coins, only into USDC, and never below 0.99 USDC per coin: if no buyer pays that much, nothing sells. This is not spot trading and cannot buy any other coin. Minimum 11 (at the 0.99 floor that clears the exchange minimum of $10). It can fill partly — report soldSz and usdcReceived, not the amount asked for. Counts against the owner-set daily limit; only what actually sold is charged.",
     inputSchema: {
       type: "object",
       properties: {
@@ -249,7 +249,7 @@ export const HYPERLIQUID_TOOLS: ToolDef[] = [
         },
         amount: {
           type: "number",
-          description: "How many coins to convert, e.g. 123.27. Minimum 10.",
+          description: "How many coins to convert, e.g. 123.27. Minimum 11.",
         },
       },
       required: ["from", "amount"],
