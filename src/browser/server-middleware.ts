@@ -14,7 +14,9 @@ export function installBrowserCommonMiddleware(app: Express) {
       }
     });
     // Make the signal available to browser route handlers (best-effort).
-    (req as unknown as { signal?: AbortSignal }).signal = ctrl.signal;
+    // Node 24 defines a getter-only IncomingMessage#signal, so plain assignment throws;
+    // an own property shadows it and keeps our abort-only-on-client-disconnect semantics.
+    Object.defineProperty(req, "signal", { value: ctrl.signal, configurable: true });
     next();
   });
   app.use(express.json({ limit: "1mb" }));
