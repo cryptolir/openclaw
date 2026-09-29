@@ -97,6 +97,15 @@ export class HyperliquidRuntimeClient {
     return this.post("/transfer", body);
   }
 
+  /**
+   * Convert an allowlisted stablecoin (USDH, USDT0, USDE) into USDC. The
+   * runtime fixes everything else — the target (always USDC), the side and the
+   * 0.99 price floor — so only the coin and the amount are the caller's.
+   */
+  swap(body: { from: string; amount: number }): Promise<unknown> {
+    return this.post("/swap", body);
+  }
+
   private async get(path: string): Promise<unknown> {
     const res = await fetch(`${this.baseUrl}/api/runtime/hyperliquid${path}`, {
       headers: { Authorization: `Bearer ${this.token}` },

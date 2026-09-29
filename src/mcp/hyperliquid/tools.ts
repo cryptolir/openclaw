@@ -236,6 +236,29 @@ export const HYPERLIQUID_TOOLS: ToolDef[] = [
     handler: (c) => c.transferStatus(),
   },
   {
+    name: "hl_swap",
+    description:
+      "Convert a stablecoin held on the spot side — USDH, USDT0 or USDE — into USDC, so it can back perp trades. Only those three coins, only into USDC, and never below 0.99 USDC per coin: if no buyer pays that much, nothing sells. This is not spot trading and cannot buy any other coin. Minimum 11 (at the 0.99 floor that clears the exchange minimum of $10). It can fill partly — report soldSz and usdcReceived, not the amount asked for. Counts against the owner-set daily limit; only what actually sold is charged.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        from: {
+          type: "string",
+          enum: ["USDH", "USDT0", "USDE"],
+          description: "The stablecoin to convert into USDC.",
+        },
+        amount: {
+          type: "number",
+          description: "How many coins to convert, e.g. 123.27. Minimum 11.",
+        },
+      },
+      required: ["from", "amount"],
+    },
+    // Passed through untouched: the runtime owns the allowlist, the target and
+    // the floor. Nothing is added here that could widen the swap.
+    handler: (c, a) => c.swap({ from: str(a, "from"), amount: num(a, "amount") }),
+  },
+  {
     name: "hl_account_status",
     description:
       "Trading readiness for this agent's own account: whether Hyperliquid is enabled, the Trading Key is present, the exchange still honours its approval, and when that approval expires. Use this to explain WHY an order might be refused, instead of discovering it from the refusal.",
