@@ -11,6 +11,7 @@ import {
 } from "./chrome.js";
 import type { ResolvedBrowserProfile } from "./config.js";
 import { resolveProfile } from "./config.js";
+import { DEFAULT_BROWSER_MAX_TABS } from "./constants.js";
 import {
   ensureChromeExtensionRelayServer,
   stopChromeExtensionRelayServer,
@@ -38,6 +39,13 @@ import type {
 } from "./server-context.types.js";
 import { resolveTargetIdFromTabs } from "./target-id.js";
 import { movePathToTrash } from "./trash.js";
+
+export class BrowserTabLimitError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "BrowserTabLimitError";
+  }
+}
 
 export type {
   BrowserRouteContext,
@@ -226,10 +234,29 @@ function createProfileContext(
     };
   };
 
+  // Every open goes through here (the tool, the CLI, a node proxy), so the tab
+  // limit lives here: an agent that opens a tab per step piles up tabs until
+  // the browser runs out of memory. Only page targets count (workers and
+  // iframes are not tabs). If the list can't be read, the open goes ahead.
+  const assertUnderTabLimit = async () => {
+    const maxTabs = state().resolved.maxTabs ?? DEFAULT_BROWSER_MAX_TABS;
+    if (maxTabs <= 0) {
+      return;
+    }
+    const tabs = await listTabs().catch(() => [] as BrowserTab[]);
+    const open = tabs.filter((t) => !t.type || t.type === "page").length;
+    if (open >= maxTabs) {
+      throw new BrowserTabLimitError(
+        `tab limit reached (${open} tabs open, browser.maxTabs=${maxTabs}): navigate an existing tab or close one first`,
+      );
+    }
+  };
+
   // The browser follows redirects on its own, so the URL a tab landed on is not
   // necessarily the one openTabUnchecked was asked for. Re-check it, and close
   // the tab on failure so a later snapshot cannot read a disallowed page.
   const openTab = async (url: string): Promise<BrowserTab> => {
+    await assertUnderTabLimit();
     const tab = await openTabUnchecked(url);
     try {
       await assertBrowserNavigationResultAllowed({
@@ -671,6 +698,9 @@ export function createBrowserRouteContext(opts: ContextOptions): BrowserRouteCon
     }
     if (err instanceof InvalidBrowserNavigationUrlError) {
       return { status: 400, message: err.message };
+    }
+    if (err instanceof BrowserTabLimitError) {
+      return { status: 409, message: err.message };
     }
     const msg = String(err);
     if (msg.includes("ambiguous target id prefix")) {

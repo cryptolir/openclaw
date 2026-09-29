@@ -11,6 +11,7 @@ import {
   DEFAULT_OPENCLAW_BROWSER_COLOR,
   DEFAULT_OPENCLAW_BROWSER_ENABLED,
   DEFAULT_BROWSER_EVALUATE_ENABLED,
+  DEFAULT_BROWSER_MAX_TABS,
   DEFAULT_BROWSER_DEFAULT_PROFILE_NAME,
   DEFAULT_OPENCLAW_BROWSER_PROFILE_NAME,
 } from "./constants.js";
@@ -19,6 +20,8 @@ import { CDP_PORT_RANGE_START, getUsedPorts } from "./profiles.js";
 export type ResolvedBrowserConfig = {
   enabled: boolean;
   evaluateEnabled: boolean;
+  /** Open refuses past this many page tabs; 0 = no limit. */
+  maxTabs?: number;
   controlPort: number;
   cdpProtocol: "http" | "https";
   cdpHost: string;
@@ -174,6 +177,10 @@ export function resolveBrowserConfig(
 ): ResolvedBrowserConfig {
   const enabled = cfg?.enabled ?? DEFAULT_OPENCLAW_BROWSER_ENABLED;
   const evaluateEnabled = cfg?.evaluateEnabled ?? DEFAULT_BROWSER_EVALUATE_ENABLED;
+  const maxTabs =
+    typeof cfg?.maxTabs === "number" && Number.isFinite(cfg.maxTabs) && cfg.maxTabs >= 0
+      ? Math.floor(cfg.maxTabs)
+      : DEFAULT_BROWSER_MAX_TABS;
   const gatewayPort = resolveGatewayPort(rootConfig);
   const controlPort = deriveDefaultBrowserControlPort(gatewayPort ?? DEFAULT_BROWSER_CONTROL_PORT);
   const defaultColor = normalizeHexColor(cfg?.color);
@@ -237,6 +244,7 @@ export function resolveBrowserConfig(
   return {
     enabled,
     evaluateEnabled,
+    maxTabs,
     controlPort,
     cdpProtocol,
     cdpHost: cdpInfo.parsed.hostname,

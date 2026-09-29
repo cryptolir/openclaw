@@ -30,6 +30,8 @@ export type BrowserConfig = {
   enabled?: boolean;
   /** If false, disable browser act:evaluate (arbitrary JS). Default: true */
   evaluateEnabled?: boolean;
+  /** Refuse to open a tab when this many are already open (0 = no limit). Default: 6 */
+  maxTabs?: number;
   /** Base URL of the CDP endpoint (for remote browsers). Default: loopback CDP on the derived port. */
   cdpUrl?: string;
   /** Remote CDP HTTP timeout (ms). Default: 1500. */

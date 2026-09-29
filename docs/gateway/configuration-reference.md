@@ -1930,6 +1930,7 @@ See [Plugins](/tools/plugin).
   browser: {
     enabled: true,
     evaluateEnabled: true,
+    maxTabs: 6,
     defaultProfile: "chrome",
     profiles: {
       openclaw: { cdpPort: 18800, color: "#FF4500" },
@@ -1946,6 +1947,7 @@ See [Plugins](/tools/plugin).
 ```
 
 - `evaluateEnabled: false` disables `act:evaluate` and `wait --fn`.
+- `maxTabs`: `open` refuses when this many tabs are already open (default `6`, `0` = no limit), so an agent reuses tabs with `navigate` instead of piling them up.
 - Remote profiles are attach-only (start/stop/reset disabled).
 - Auto-detect order: default browser if Chromium-based → Chrome → Brave → Edge → Chromium → Chrome Canary.
 - Control service: loopback only (port derived from `gateway.port`, default `18791`).
