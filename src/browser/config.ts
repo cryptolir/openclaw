@@ -11,6 +11,7 @@ import {
   DEFAULT_OPENCLAW_BROWSER_COLOR,
   DEFAULT_OPENCLAW_BROWSER_ENABLED,
   DEFAULT_BROWSER_EVALUATE_ENABLED,
+  DEFAULT_BROWSER_MAX_TABS,
   DEFAULT_BROWSER_DEFAULT_PROFILE_NAME,
   DEFAULT_OPENCLAW_BROWSER_PROFILE_NAME,
 } from "./constants.js";
@@ -19,6 +20,8 @@ import { CDP_PORT_RANGE_START, getUsedPorts } from "./profiles.js";
 export type ResolvedBrowserConfig = {
   enabled: boolean;
   evaluateEnabled: boolean;
+  /** Open refuses past this many page tabs; 0 = no limit. */
+  maxTabs?: number;
   controlPort: number;
   cdpProtocol: "http" | "https";
   cdpHost: string;
@@ -168,12 +171,20 @@ function ensureDefaultChromeExtensionProfile(
   };
   return result;
 }
+/** `browser.maxTabs`: a whole number of tabs, 0 = no limit; anything else is the default. */
+export function resolveBrowserMaxTabs(raw: unknown): number {
+  return typeof raw === "number" && Number.isFinite(raw) && raw >= 0
+    ? Math.floor(raw)
+    : DEFAULT_BROWSER_MAX_TABS;
+}
+
 export function resolveBrowserConfig(
   cfg: BrowserConfig | undefined,
   rootConfig?: OpenClawConfig,
 ): ResolvedBrowserConfig {
   const enabled = cfg?.enabled ?? DEFAULT_OPENCLAW_BROWSER_ENABLED;
   const evaluateEnabled = cfg?.evaluateEnabled ?? DEFAULT_BROWSER_EVALUATE_ENABLED;
+  const maxTabs = resolveBrowserMaxTabs(cfg?.maxTabs);
   const gatewayPort = resolveGatewayPort(rootConfig);
   const controlPort = deriveDefaultBrowserControlPort(gatewayPort ?? DEFAULT_BROWSER_CONTROL_PORT);
   const defaultColor = normalizeHexColor(cfg?.color);
@@ -237,6 +248,7 @@ export function resolveBrowserConfig(
   return {
     enabled,
     evaluateEnabled,
+    maxTabs,
     controlPort,
     cdpProtocol,
     cdpHost: cdpInfo.parsed.hostname,
