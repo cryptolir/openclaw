@@ -246,6 +246,8 @@ SUBJECT="[AgentGlob] Fleet diagnostic $(date +%F) — ${COUNTS:-scan complete}"
 # A disk the prune could not clear fails the next roll. The P0 count alone never
 # got it acted on — other P0s keep that count above zero — so name it.
 [[ -n "$DISK_ALERTS" ]] && SUBJECT="⚠ DISK — next image pull will fail — $SUBJECT"
+# Tag first so agents can find every cron email by subject.
+SUBJECT="-cron*AG*- $SUBJECT"
 if command -v msmtp >/dev/null 2>&1; then
   {
     printf 'Subject: %s\n' "$SUBJECT"

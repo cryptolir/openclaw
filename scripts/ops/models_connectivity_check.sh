@@ -157,7 +157,7 @@ printf '%s\n' "$report" > "$REPORT_FILE" 2>/dev/null || true
 # ── Optional email ───────────────────────────────────────────────────────────
 if [[ -n "$EMAIL_TO" ]] && command -v msmtp >/dev/null 2>&1; then
   bad=$(echo "$report" | grep -c '\[FAIL\]' || true)
-  subj="[AgentGlob] Model connectivity $(date +%F) — $([[ $bad -eq 0 ]] && echo 'ALL OK' || echo "${bad} FAILING")"
+  subj="-cron*AG*- [AgentGlob] Model connectivity $(date +%F) — $([[ $bad -eq 0 ]] && echo 'ALL OK' || echo "${bad} FAILING")"
   printf 'Subject: %s\nFrom: AgentGlob Diagnostics <onetrue2023@gmail.com>\nTo: %s\nContent-Type: text/plain; charset=UTF-8\n\n%s\n' \
     "$subj" "$EMAIL_TO" "$report" | msmtp "$EMAIL_TO" \
     && echo "→ report emailed to $EMAIL_TO" || echo "WARN: email send failed (see ~/.msmtp.log)" >&2
