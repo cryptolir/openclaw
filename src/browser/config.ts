@@ -171,16 +171,20 @@ function ensureDefaultChromeExtensionProfile(
   };
   return result;
 }
+/** `browser.maxTabs`: a whole number of tabs, 0 = no limit; anything else is the default. */
+export function resolveBrowserMaxTabs(raw: unknown): number {
+  return typeof raw === "number" && Number.isFinite(raw) && raw >= 0
+    ? Math.floor(raw)
+    : DEFAULT_BROWSER_MAX_TABS;
+}
+
 export function resolveBrowserConfig(
   cfg: BrowserConfig | undefined,
   rootConfig?: OpenClawConfig,
 ): ResolvedBrowserConfig {
   const enabled = cfg?.enabled ?? DEFAULT_OPENCLAW_BROWSER_ENABLED;
   const evaluateEnabled = cfg?.evaluateEnabled ?? DEFAULT_BROWSER_EVALUATE_ENABLED;
-  const maxTabs =
-    typeof cfg?.maxTabs === "number" && Number.isFinite(cfg.maxTabs) && cfg.maxTabs >= 0
-      ? Math.floor(cfg.maxTabs)
-      : DEFAULT_BROWSER_MAX_TABS;
+  const maxTabs = resolveBrowserMaxTabs(cfg?.maxTabs);
   const gatewayPort = resolveGatewayPort(rootConfig);
   const controlPort = deriveDefaultBrowserControlPort(gatewayPort ?? DEFAULT_BROWSER_CONTROL_PORT);
   const defaultColor = normalizeHexColor(cfg?.color);

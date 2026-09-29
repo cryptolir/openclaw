@@ -111,6 +111,7 @@ export async function resolveSandboxContext(params: {
 
   const evaluateEnabled =
     params.config?.browser?.evaluateEnabled ?? DEFAULT_BROWSER_EVALUATE_ENABLED;
+  const maxTabs = params.config?.browser?.maxTabs;
 
   const bridgeAuth = cfg.browser.enabled
     ? await (async () => {
@@ -134,6 +135,7 @@ export async function resolveSandboxContext(params: {
     agentWorkspaceDir,
     cfg,
     evaluateEnabled,
+    maxTabs,
     bridgeAuth,
   });
 

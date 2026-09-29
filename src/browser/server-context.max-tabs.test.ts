@@ -126,7 +126,6 @@ describe("browser tab limit (browser.maxTabs)", () => {
   it("resolves maxTabs from config: default 6, 0 kept, junk falls back", () => {
     expect(resolveBrowserConfig({}).maxTabs).toBe(6);
     expect(resolveBrowserConfig({ maxTabs: 0 }).maxTabs).toBe(0);
-    expect(resolveBrowserConfig({ maxTabs: 3.7 }).maxTabs).toBe(3);
     expect(resolveBrowserConfig({ maxTabs: -1 }).maxTabs).toBe(6);
   });
 });

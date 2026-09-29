@@ -93,6 +93,32 @@ function withLoopbackBrowserAuth(
   });
 }
 
+/**
+ * The control service answered with an error status. It is reachable, and the message is the
+ * service's own (a 404 "tab not found", a 409 "tab limit reached"), so it must reach the model
+ * as it is, never wrapped as "can't reach the browser, do not retry".
+ */
+export class BrowserControlHttpError extends Error {
+  readonly status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "BrowserControlHttpError";
+    this.status = status;
+  }
+}
+
+function controlErrorMessage(status: number, text: string): string {
+  try {
+    const parsed = JSON.parse(text) as { error?: unknown };
+    if (parsed && typeof parsed === "object" && typeof parsed.error === "string") {
+      return parsed.error;
+    }
+  } catch {
+    // not JSON: the raw text is the message
+  }
+  return text || `HTTP ${status}`;
+}
+
 function enhanceBrowserFetchError(url: string, err: unknown, timeoutMs: number): Error {
   const isLocal = !isAbsoluteHttp(url);
   // Human-facing hint for logs/diagnostics.
@@ -144,7 +170,7 @@ async function fetchHttpJson<T>(
     const res = await fetch(url, { ...init, signal: ctrl.signal });
     if (!res.ok) {
       const text = await res.text().catch(() => "");
-      throw new Error(text || `HTTP ${res.status}`);
+      throw new BrowserControlHttpError(res.status, controlErrorMessage(res.status, text));
     }
     return (await res.json()) as T;
   } finally {
@@ -239,10 +265,13 @@ export async function fetchBrowserJson<T>(
         result.body && typeof result.body === "object" && "error" in result.body
           ? String((result.body as { error?: unknown }).error)
           : `HTTP ${result.status}`;
-      throw new Error(message);
+      throw new BrowserControlHttpError(result.status, message);
     }
     return result.body as T;
   } catch (err) {
+    if (err instanceof BrowserControlHttpError) {
+      throw err;
+    }
     throw enhanceBrowserFetchError(url, err, timeoutMs);
   }
 }

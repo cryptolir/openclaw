@@ -1,6 +1,10 @@
 import crypto from "node:crypto";
 import { startBrowserBridgeServer, stopBrowserBridgeServer } from "../../browser/bridge-server.js";
-import { type ResolvedBrowserConfig, resolveProfile } from "../../browser/config.js";
+import {
+  type ResolvedBrowserConfig,
+  resolveBrowserMaxTabs,
+  resolveProfile,
+} from "../../browser/config.js";
 import {
   DEFAULT_BROWSER_EVALUATE_ENABLED,
   DEFAULT_OPENCLAW_BROWSER_COLOR,
@@ -53,11 +57,13 @@ function buildSandboxBrowserResolvedConfig(params: {
   cdpPort: number;
   headless: boolean;
   evaluateEnabled: boolean;
+  maxTabs: number;
 }): ResolvedBrowserConfig {
   const cdpHost = "127.0.0.1";
   return {
     enabled: true,
     evaluateEnabled: params.evaluateEnabled,
+    maxTabs: params.maxTabs,
     controlPort: params.controlPort,
     cdpProtocol: "http",
     cdpHost,
@@ -98,6 +104,7 @@ export async function ensureSandboxBrowser(params: {
   agentWorkspaceDir: string;
   cfg: SandboxConfig;
   evaluateEnabled?: boolean;
+  maxTabs?: number;
   bridgeAuth?: { token?: string; password?: string };
 }): Promise<SandboxBrowserContext | null> {
   if (!params.cfg.browser.enabled) {
@@ -286,6 +293,7 @@ export async function ensureSandboxBrowser(params: {
         cdpPort: mappedCdp,
         headless: params.cfg.browser.headless,
         evaluateEnabled: params.evaluateEnabled ?? DEFAULT_BROWSER_EVALUATE_ENABLED,
+        maxTabs: resolveBrowserMaxTabs(params.maxTabs),
       }),
       authToken: desiredAuthToken,
       authPassword: desiredAuthPassword,
