@@ -89,6 +89,9 @@ export function resolveOpenClawMetadata(
     homepage: typeof metadataObj.homepage === "string" ? metadataObj.homepage : undefined,
     skillKey: typeof metadataObj.skillKey === "string" ? metadataObj.skillKey : undefined,
     primaryEnv: typeof metadataObj.primaryEnv === "string" ? metadataObj.primaryEnv : undefined,
+    env: Array.isArray(metadataObj.env)
+      ? metadataObj.env.filter((v): v is string => typeof v === "string" && v.trim().length > 0)
+      : undefined,
     os: osRaw.length > 0 ? osRaw : undefined,
     requires: requires,
     install: install.length > 0 ? install : undefined,

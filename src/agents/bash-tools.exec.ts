@@ -408,6 +408,9 @@ export function createExecTool(
           maxOutput,
           pendingMaxOutput,
           trustedSafeBinDirs,
+          baseEnv,
+          modelEnvKeys: paramsEnv ? Object.keys(paramsEnv) : [],
+          scriptEnv: defaults?.scriptEnv,
         });
         if (gatewayResult.pendingResult) {
           return gatewayResult.pendingResult;

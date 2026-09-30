@@ -190,6 +190,13 @@ export type ExecToolConfig = {
   pathPrepend?: string[];
   /** Safe stdin-only binaries that can run without allowlist entries. */
   safeBins?: string[];
+  /**
+   * Environment of an allowlisted script (security=allowlist, host=gateway): "all" (default) passes
+   * the gateway's environment; "report" does too and logs the key names a script would lose;
+   * "declared" passes only the always-passed names and the keys the script's skill declares
+   * (requires.env, primaryEnv, env). See openclaw-dashboard docs/plans/active/exec-secret-keys.md.
+   */
+  scriptEnv?: "all" | "report" | "declared";
   /** Default time (ms) before an exec command auto-backgrounds. */
   backgroundMs?: number;
   /** Default timeout (seconds) before auto-killing exec commands. */
