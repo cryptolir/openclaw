@@ -87,6 +87,11 @@ steps — no custom credential storage.
 Full activation matrix + required dashboard changes:
 `openclaw-dashboard/PLATFORM_INTEGRATIONS_V1_ARCHITECTURE.md` §1a.
 
+**Skill index:** every skill AgentGlob ships (Featured, by category: delivery, needs, who uses it,
+plan, tests) is listed in `openclaw-dashboard/docs/SKILLS.md`. Bundled skills are the ones in this
+repo's `skills/manifest.json`. Terms (Featured, Bundled, Custom, Managed) are in
+`openclaw-dashboard/docs/TERMINOLOGY.md`.
+
 ### 2.3 Identity & user management — 4-layer model
 
 | #   | Layer               | Who                                                | Auth (today)                     | Store                                   |
