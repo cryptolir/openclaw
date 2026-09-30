@@ -27,6 +27,8 @@
 #   - disk free < DISK_FREE_WARN_GB (one image pull left) ....... P2
 #   - no docker log rotation (unbounded logs) ................... P2
 #   - docker.env key not reaching the container ................. P2
+#   - container holds a key its own docker.env did not give it .. P1
+#     (P2 if the file changed after the container was made)
 #   - SECRETS CONTAINMENT: container can read a non-empty secrets
 #     file, or a .bak/.tmp snapshot, through any mount ........... P1
 #   - compose file missing the secrets shadow line ............... P1
@@ -272,7 +274,7 @@ for cname in $(docker ps -a --format '{{.Names}}' | grep -- '-openclaw-gateway-1
         printf "%s\n" "$_cenv" | grep -qx "$_k" || _missing="${_missing}${_k} "
       done
       if [ -n "$_missing" ]; then
-        em "ISSUE|P2|$H|$agent|Key in docker.env never reaches the container|Saved for this agent but missing from its container env: ${_missing}- so any skill needing it fails as though unconfigured, while the dashboard shows it set. Cause is nearly always the compose allowlist: add the key to BOTH service blocks in /opt/openclaw/docker-compose.yml (with a :- default so agents without it are unaffected), then recreate the agent with: cd /opt/openclaw && docker compose -p ${agent} --env-file ${envf} up -d --force-recreate openclaw-gateway (a plain up -d is a no-op when the config hash matches). If the key IS already in the repo compose, then THIS HOST has drifted - reconcile /opt/openclaw to main."
+        em "ISSUE|P2|$H|$agent|Key in docker.env never reaches the container|Saved for this agent but missing from its container env: ${_missing}- so any skill needing it fails as though unconfigured, while the dashboard shows it set. Cause is nearly always the compose allowlist: add the key to BOTH service blocks in /opt/openclaw/docker-compose.yml (with a :- default so agents without it are unaffected), then recreate the agent with: cd /opt/openclaw && env -i PATH=\"\$PATH\" HOME=\"\$HOME\" docker compose -p ${agent} --env-file ${envf} up -d --force-recreate openclaw-gateway (a plain up -d is a no-op when the config hash matches; env -i because Compose prefers the calling shell exported variables over --env-file). If the key IS already in the repo compose, then THIS HOST has drifted - reconcile /opt/openclaw to main."
       fi
     fi
   fi
@@ -340,7 +342,7 @@ for cname in $(docker ps --format '{{.Names}}' | grep -- '-openclaw-gateway-1' 2
   case "$cread" in
     SHADOWED) ;;  # healthy
     READABLE-NONEMPTY)
-      em "ISSUE|P1|$H|$agent|Container can READ its secrets file|The shadow mount is missing or broken: /home/node/.openclaw/docker.env is non-empty inside the container, so every key in it (wallet keys included) is readable by the agent. Fix: confirm /opt/openclaw/docker-compose.yml carries the empty.env shadow line for BOTH services, /opt/openclaw/empty.env exists and is empty, then recreate: cd /opt/openclaw && docker compose -p ${agent} --env-file /root/.openclaw/agents/${agent}/docker.env up -d --force-recreate openclaw-gateway - the --force-recreate is REQUIRED: a plain up -d matches the stored config hash, prints Running and changes nothing (verified on 1stClaw 2026-08-22). Re-probe this agent afterwards rather than assuming; confirm the file reads 0 bytes inside the container." ;;
+      em "ISSUE|P1|$H|$agent|Container can READ its secrets file|The shadow mount is missing or broken: /home/node/.openclaw/docker.env is non-empty inside the container, so every key in it (wallet keys included) is readable by the agent. Fix: confirm /opt/openclaw/docker-compose.yml carries the empty.env shadow line for BOTH services, /opt/openclaw/empty.env exists and is empty, then recreate: cd /opt/openclaw && env -i PATH=\"\$PATH\" HOME=\"\$HOME\" docker compose -p ${agent} --env-file /root/.openclaw/agents/${agent}/docker.env up -d --force-recreate openclaw-gateway - the --force-recreate is REQUIRED: a plain up -d matches the stored config hash, prints Running and changes nothing (verified on 1stClaw 2026-08-22). Re-probe this agent afterwards rather than assuming; confirm the file reads 0 bytes inside the container." ;;
     WRITABLE)
       em "ISSUE|P1|$H|$agent|Secrets shadow is WRITABLE from the container|The shadow must be read-only (:ro). A writable shadow lets the agent alter what the host believes about its own env. Same fix path as the shadow line; verify the :ro suffix." ;;
     NOFILE)
@@ -371,6 +373,9 @@ fi
 # one in the same PR. Key NAMES only are ever emitted, never a value.
 GLOBAL_ENV=/opt/openclaw/.env
 CORE_APIS="OPENROUTER_API_KEY VENICE_API_KEY OPENAI_API_KEY BRAVE_API_KEY ELEVENLABS_API_KEY NVIDIA_API_KEY"
+# In GLOBAL_KEYS too (dashboard #443) but on no host yet: allowed here, not required. The dashboard
+# copies exactly the GLOBAL_KEYS names into a new Agent, so none of them may be reported as extra.
+CORE_APIS_OPTIONAL="ANTHROPIC_API_KEY"
 if [ ! -f "$GLOBAL_ENV" ]; then
   em "ISSUE|P1|$H|host|No Global Host env file|${GLOBAL_ENV} is missing, so a new Agent on this host is seeded from nothing."
 else
@@ -387,10 +392,75 @@ else
   gextra=""
   for k in $gkeys; do
     case "$k" in OPENCLAW_*) continue ;; esac
-    printf '%s\n' "$CORE_APIS" | tr ' ' '\n' | grep -qx "$k" || gextra="${gextra} ${k}"
+    printf '%s\n' "$CORE_APIS $CORE_APIS_OPTIONAL" | tr ' ' '\n' | grep -qx "$k" || gextra="${gextra} ${k}"
   done
   [ -n "$gextra" ] && em "ISSUE|P1|$H|host|Global Host carries non-Core-API secrets|Extra keys:${gextra} — the Global Host must hold ONLY the Core APIs plus this server own OPENCLAW_* settings (docs/TERMINOLOGY.md, Global Host). Every key here is inherited by every Agent the dashboard seeds from it, so a per-Agent or per-person credential belongs in that Agent own docker.env instead."
 fi
+
+# ── D4. ENV SOURCE — every container value comes from its own docker.env ─────
+# The mirror of the file -> container check above. Compose fills every `${NAME}`
+# from the CALLING SHELL before --env-file (measured 2026-09-10 and 2026-09-30),
+# so a recreate run from a shell that exports NAME hands this agent that value:
+# another agent's key, or one it was never given. A Ceyo agent held 18 such keys
+# on 2026-09-09 (dashboard #543). Checked by SYMPTOM, so it needs no list of
+# callers: Compose itself renders the agent's own docker.env with an EMPTY
+# environment, and every non-empty value in the container must equal the render.
+# Compose does the parsing (quotes, comments, `$` in a value), so nothing here
+# can disagree with it. Every gateway, openclaw and hermes, running or not: the
+# watchdog restarts a stopped one with the environment it was made with.
+# Values are compared in memory; only key NAMES are ever printed
+# (dashboard plan agent-keys-own-file-only, HK3).
+python3 - "$H" <<'PYENV' || em "ISSUE|P2|$H|host|Env source check crashed|The D4 block of the diagnostic exited with an error, so no container was compared with its own docker.env on this host. Run it by hand to see why."
+import datetime, json, os, re, subprocess, sys
+
+H = sys.argv[1]
+ROOT = os.environ.get("ENV_SOURCE_ROOT", "/root")  # a test points this at a fixture
+CLEAN = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": os.environ.get("HOME", "/root")}
+KIND = re.compile(r"-(openclaw|hermes)-gateway-1$")
+
+
+def run(*cmd, **kw):
+    return subprocess.run(cmd, capture_output=True, text=True, **kw)
+
+
+names = sorted(n for n in run("docker", "ps", "-a", "--format", "{{.Names}}").stdout.split() if KIND.search(n))
+compared = 0
+for cname in names:
+    agent, kind = KIND.sub("", cname), KIND.search(cname).group(1)
+    own = f"{ROOT}/.{kind}/agents/{agent}/docker.env"
+    fix = (f"recreate it from a CLEAN environment so the file is the only source: cd /opt/{kind} && "
+           f'env -i PATH="$PATH" HOME="$HOME" docker compose -p {agent} --env-file {own} up -d --force-recreate {kind}-gateway')
+    try:
+        info = json.loads(run("docker", "inspect", cname).stdout)[0]
+        labels = info["Config"].get("Labels") or {}
+        live = dict(e.split("=", 1) for e in info["Config"].get("Env") or [] if "=" in e)
+        created = datetime.datetime.fromisoformat(info["Created"][:19] + "+00:00").timestamp()
+    except Exception:
+        print(f"ISSUE|P2|{H}|{agent}|Env source check failed|docker inspect gave nothing usable for {cname}, so it was not compared with its docker.env.")
+        continue
+    if not os.path.isfile(own):
+        print(f"ISSUE|P1|{H}|{agent}|Container has no docker.env of its own|{cname} exists but {own} does not, so every key it holds came from somewhere else: the shell that ran Compose, or the host-wide env file. Deploy it from the dashboard, which writes its own file.")
+        continue
+    svc = labels.get("com.docker.compose.service") or f"{kind}-gateway"
+    render = run("docker", "compose", "--project-name", agent, "--env-file", own, "config", "--format", "json",
+                 cwd=labels.get("com.docker.compose.project.working_dir") or f"/opt/{kind}", env=CLEAN)
+    try:
+        want = json.loads(render.stdout)["services"][svc].get("environment") or {}
+    except Exception:
+        print(f"ISSUE|P2|{H}|{agent}|Env source check failed|Compose could not render {own} for service {svc} (exit {render.returncode}), so {cname} was not compared with it.")
+        continue
+    compared += 1
+    # `config` doubles every `$` it prints; a name the render does not carry is not Compose's to pass.
+    differ = sorted(n for n, v in live.items() if v and n in want and v != (want[n] or "").replace("$$", "$"))
+    if not differ:
+        continue
+    if os.path.getmtime(own) > created:
+        print(f"ISSUE|P2|{H}|{agent}|docker.env changed since the container was made|These keys differ between {cname} and its docker.env, and the file is the newer of the two: {' '.join(differ)} - a key saved or removed for this agent is not live yet. To apply it, {fix}")
+    else:
+        print(f"ISSUE|P1|{H}|{agent}|Container holds a key its own docker.env did not give it|Non-empty in {cname} but absent from, or different in, its own docker.env, which has not changed since the container was made: {' '.join(differ)} - so the value came from the shell that ran Compose (it prefers exported variables over --env-file). The agent runs a key it was not given. Fix: {fix} - then find which shell exported the name (a sourced ops.env, an export left from another step) before it happens again.")
+state = "ok" if compared == len(names) else "warn"
+print(f"METRIC|{H}|env-source|{compared} of {len(names)} gateway containers compared with their own docker.env|{state}")
+PYENV
 
 em "METRIC|$H|reachable|yes|ok"
 REMOTE
