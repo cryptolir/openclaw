@@ -65,3 +65,12 @@ jobs:
 
       - name: Disallow direct inputs interpolation in composite run blocks
         run: python3 scripts/check-composite-action-input-interpolation.py
+
+  ops-script-tests:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run the ops script tests
+        run: python3 scripts/ops/test_env_source_check.py

@@ -127,6 +127,10 @@ fi
 # (\${COMPOSE_DIR}/.env), never from a sibling's file: a sibling may hold its OWN key under the
 # same name (one on 1stClaw does), and copying it would hand one agent's key to another
 # (dashboard plan agent-keys-own-file-only, R13).
+if [[ ! -f "\${COMPOSE_DIR}/.env" ]]; then
+  echo "ERROR: No Global Host file (\${COMPOSE_DIR}/.env). Cannot read the Core APIs." >&2
+  exit 1
+fi
 get_key() { grep -E "^\${1}=" "\$2" 2>/dev/null | head -1 | cut -d= -f2- || echo ""; }
 OPENCLAW_IMAGE=\$(get_key OPENCLAW_IMAGE "\$SOURCE_ENV")
 OPENAI_API_KEY=\$(get_key OPENAI_API_KEY "\${COMPOSE_DIR}/.env")

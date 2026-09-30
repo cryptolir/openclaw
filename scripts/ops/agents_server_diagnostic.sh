@@ -27,8 +27,7 @@
 #   - disk free < DISK_FREE_WARN_GB (one image pull left) ....... P2
 #   - no docker log rotation (unbounded logs) ................... P2
 #   - docker.env key not reaching the container ................. P2
-#   - container holds a key its own docker.env did not give it .. P1
-#     (P2 if the file changed after the container was made)
+#   - container holds a value its own docker.env does not ....... P1
 #   - SECRETS CONTAINMENT: container can read a non-empty secrets
 #     file, or a .bak/.tmp snapshot, through any mount ........... P1
 #   - compose file missing the secrets shadow line ............... P1
@@ -366,8 +365,9 @@ fi
 
 # ── D3. GLOBAL HOST — Core APIs + file mode ──────────────────────────────────
 # /opt/openclaw/.env is the Global Host: the dashboard seeds every new Agent's
-# docker.env from it, so anything sitting here is inherited by every Agent
-# created afterwards. Checked against the Core APIs, which are defined in the
+# docker.env with its Core API lines (only those, since the dashboard's
+# coreApiLines), so what sits here is what every new Agent starts with, and
+# anything else here has no reader. Checked against the Core APIs, defined in the
 # DASHBOARD repo (lib/agent-constants.ts GLOBAL_KEYS, docs/TERMINOLOGY.md
 # "Core APIs"). Nothing syncs the two repos — if that list changes, change this
 # one in the same PR. Key NAMES only are ever emitted, never a value.
@@ -394,7 +394,7 @@ else
     case "$k" in OPENCLAW_*) continue ;; esac
     printf '%s\n' "$CORE_APIS $CORE_APIS_OPTIONAL" | tr ' ' '\n' | grep -qx "$k" || gextra="${gextra} ${k}"
   done
-  [ -n "$gextra" ] && em "ISSUE|P1|$H|host|Global Host carries non-Core-API secrets|Extra keys:${gextra} — the Global Host must hold ONLY the Core APIs plus this server own OPENCLAW_* settings (docs/TERMINOLOGY.md, Global Host). Every key here is inherited by every Agent the dashboard seeds from it, so a per-Agent or per-person credential belongs in that Agent own docker.env instead."
+  [ -n "$gextra" ] && em "ISSUE|P1|$H|host|Global Host carries non-Core-API secrets|Extra keys:${gextra} — the Global Host must hold ONLY the Core APIs plus this server own OPENCLAW_* settings (docs/TERMINOLOGY.md, Global Host). The dashboard copies only the Core API lines into a new Agent, so an extra key here has no reader: a per-Agent or per-person credential belongs in that Agent own docker.env instead."
 fi
 
 # ── D4. ENV SOURCE — every container value comes from its own docker.env ─────
@@ -411,7 +411,7 @@ fi
 # Values are compared in memory; only key NAMES are ever printed
 # (dashboard plan agent-keys-own-file-only, HK3).
 python3 - "$H" <<'PYENV' || em "ISSUE|P2|$H|host|Env source check crashed|The D4 block of the diagnostic exited with an error, so no container was compared with its own docker.env on this host. Run it by hand to see why."
-import datetime, json, os, re, subprocess, sys
+import json, os, re, subprocess, sys
 
 H = sys.argv[1]
 ROOT = os.environ.get("ENV_SOURCE_ROOT", "/root")  # a test points this at a fixture
@@ -423,43 +423,41 @@ def run(*cmd, **kw):
     return subprocess.run(cmd, capture_output=True, text=True, **kw)
 
 
-names = sorted(n for n in run("docker", "ps", "-a", "--format", "{{.Names}}").stdout.split() if KIND.search(n))
+ps = run("docker", "ps", "-a", "--format", "{{.Names}}")
+names = sorted(n for n in ps.stdout.split() if KIND.search(n))
 compared = 0
 for cname in names:
     agent, kind = KIND.sub("", cname), KIND.search(cname).group(1)
     own = f"{ROOT}/.{kind}/agents/{agent}/docker.env"
     fix = (f"recreate it from a CLEAN environment so the file is the only source: cd /opt/{kind} && "
            f'env -i PATH="$PATH" HOME="$HOME" docker compose -p {agent} --env-file {own} up -d --force-recreate {kind}-gateway')
-    try:
-        info = json.loads(run("docker", "inspect", cname).stdout)[0]
-        labels = info["Config"].get("Labels") or {}
-        live = dict(e.split("=", 1) for e in info["Config"].get("Env") or [] if "=" in e)
-        created = datetime.datetime.fromisoformat(info["Created"][:19] + "+00:00").timestamp()
-    except Exception:
-        print(f"ISSUE|P2|{H}|{agent}|Env source check failed|docker inspect gave nothing usable for {cname}, so it was not compared with its docker.env.")
-        continue
     if not os.path.isfile(own):
         print(f"ISSUE|P1|{H}|{agent}|Container has no docker.env of its own|{cname} exists but {own} does not, so every key it holds came from somewhere else: the shell that ran Compose, or the host-wide env file. Deploy it from the dashboard, which writes its own file.")
         continue
-    svc = labels.get("com.docker.compose.service") or f"{kind}-gateway"
-    render = run("docker", "compose", "--project-name", agent, "--env-file", own, "config", "--format", "json",
-                 cwd=labels.get("com.docker.compose.project.working_dir") or f"/opt/{kind}", env=CLEAN)
     try:
+        config = json.loads(run("docker", "inspect", cname).stdout)[0]["Config"]
+        labels = config.get("Labels") or {}
+        live = dict(e.split("=", 1) for e in config.get("Env") or [] if "=" in e)
+        svc = labels.get("com.docker.compose.service") or f"{kind}-gateway"
+        render = run("docker", "compose", "--project-name", agent, "--env-file", own, "config", "--format", "json",
+                     cwd=labels.get("com.docker.compose.project.working_dir") or f"/opt/{kind}", env=CLEAN)
         want = json.loads(render.stdout)["services"][svc].get("environment") or {}
-    except Exception:
-        print(f"ISSUE|P2|{H}|{agent}|Env source check failed|Compose could not render {own} for service {svc} (exit {render.returncode}), so {cname} was not compared with it.")
+    except Exception as e:
+        # the exception's type only: its text could quote a line of the file
+        print(f"ISSUE|P2|{H}|{agent}|Env source check failed|{cname} could not be compared with {own} ({type(e).__name__}): docker inspect or the Compose render gave nothing usable.")
         continue
     compared += 1
-    # `config` doubles every `$` it prints; a name the render does not carry is not Compose's to pass.
-    differ = sorted(n for n, v in live.items() if v and n in want and v != (want[n] or "").replace("$$", "$"))
-    if not differ:
-        continue
-    if os.path.getmtime(own) > created:
-        print(f"ISSUE|P2|{H}|{agent}|docker.env changed since the container was made|These keys differ between {cname} and its docker.env, and the file is the newer of the two: {' '.join(differ)} - a key saved or removed for this agent is not live yet. To apply it, {fix}")
-    else:
-        print(f"ISSUE|P1|{H}|{agent}|Container holds a key its own docker.env did not give it|Non-empty in {cname} but absent from, or different in, its own docker.env, which has not changed since the container was made: {' '.join(differ)} - so the value came from the shell that ran Compose (it prefers exported variables over --env-file). The agent runs a key it was not given. Fix: {fix} - then find which shell exported the name (a sourced ops.env, an export left from another step) before it happens again.")
-state = "ok" if compared == len(names) else "warn"
+    # `config` doubles every `$` it prints. A name the render does not carry is not Compose's to
+    # pass. An EMPTY container value is not compared: a key missing from the container is the
+    # file -> container check's finding, and a line added to the Compose file after the container
+    # was made (CODEX_HOME on 11 of 2ndClaw's, 2026-09-30) would read as a key the agent lost.
+    holds = sorted(n for n, v in want.items() if live.get(n) and live[n] != (v or "").replace("$$", "$"))
+    if holds:
+        print(f"ISSUE|P1|{H}|{agent}|Container holds a value its own docker.env does not|Non-empty in {cname} but absent from, or different in, its own docker.env: {' '.join(holds)} - so either the value came from the shell that ran Compose (it prefers exported variables over --env-file) and the agent runs a key it was not given, or the key was changed or removed in the file after the container was made and the old one is still live. Fix: {fix} - and if nobody changed the file, find which shell exported the name (a sourced ops.env, an export left from another step) before it happens again.")
+state = "ok" if ps.returncode == 0 and compared == len(names) else "warn"
 print(f"METRIC|{H}|env-source|{compared} of {len(names)} gateway containers compared with their own docker.env|{state}")
+if ps.returncode != 0:
+    print(f"ISSUE|P2|{H}|host|Env source check failed|docker ps exited {ps.returncode}, so no container was compared with its own docker.env on this host.")
 PYENV
 
 em "METRIC|$H|reachable|yes|ok"
