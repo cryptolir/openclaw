@@ -20,7 +20,7 @@ set -euo pipefail
 #
 # Prerequisites:
 #   - SSH config with 1stclaw and 2ndclaw host entries
-#   - At least one existing agent on the target server (for shared API keys)
+#   - At least one existing agent on the target server (for the image tag)
 #   - Target server has docker + compose installed
 
 AGENTS_DIR="/root/.openclaw/agents"
@@ -111,7 +111,7 @@ if (( NEXT_GW % 2 == 0 )); then
 fi
 NEXT_BR=\$(( NEXT_GW + 1 ))
 
-# ── 3. Read shared keys + image from existing agent ─────────────────────────
+# ── 3. Read the image from an existing agent, the Core APIs from the host ───
 SOURCE_ENV=""
 for env_file in "\${AGENTS_DIR}"/*/docker.env; do
   [[ -f "\$env_file" ]] || continue
@@ -119,16 +119,24 @@ for env_file in "\${AGENTS_DIR}"/*/docker.env; do
   break
 done
 if [[ -z "\$SOURCE_ENV" ]]; then
-  echo "ERROR: No existing agents found. Cannot copy shared API keys." >&2
+  echo "ERROR: No existing agents found. Cannot read the image tag." >&2
   exit 1
 fi
 
-get_key() { grep -E "^\${1}=" "\$SOURCE_ENV" 2>/dev/null | cut -d= -f2 || echo ""; }
-OPENCLAW_IMAGE=\$(get_key OPENCLAW_IMAGE)
-OPENAI_API_KEY=\$(get_key OPENAI_API_KEY)
-VENICE_API_KEY=\$(get_key VENICE_API_KEY)
-BRAVE_API_KEY=\$(get_key BRAVE_API_KEY)
-ELEVENLABS_API_KEY=\$(get_key ELEVENLABS_API_KEY)
+# The image tag comes from a sibling agent. The Core APIs come from the Global Host
+# (\${COMPOSE_DIR}/.env), never from a sibling's file: a sibling may hold its OWN key under the
+# same name (one on 1stClaw does), and copying it would hand one agent's key to another
+# (dashboard plan agent-keys-own-file-only, R13).
+if [[ ! -f "\${COMPOSE_DIR}/.env" ]]; then
+  echo "ERROR: No Global Host file (\${COMPOSE_DIR}/.env). Cannot read the Core APIs." >&2
+  exit 1
+fi
+get_key() { grep -E "^\${1}=" "\$2" 2>/dev/null | head -1 | cut -d= -f2- || echo ""; }
+OPENCLAW_IMAGE=\$(get_key OPENCLAW_IMAGE "\$SOURCE_ENV")
+OPENAI_API_KEY=\$(get_key OPENAI_API_KEY "\${COMPOSE_DIR}/.env")
+VENICE_API_KEY=\$(get_key VENICE_API_KEY "\${COMPOSE_DIR}/.env")
+BRAVE_API_KEY=\$(get_key BRAVE_API_KEY "\${COMPOSE_DIR}/.env")
+ELEVENLABS_API_KEY=\$(get_key ELEVENLABS_API_KEY "\${COMPOSE_DIR}/.env")
 
 # ── 4. Create directory structure ────────────────────────────────────────────
 mkdir -p "\${AGENTS_DIR}/\${AGENT_ID}/workspace"
