@@ -97,6 +97,7 @@ import {
 } from "./frames.js";
 import {
   ChatAbortParamsSchema,
+  ChatResultParamsSchema,
   ChatEventSchema,
   ChatHistoryParamsSchema,
   ChatInjectParamsSchema,
@@ -257,6 +258,7 @@ export const ProtocolSchemas: Record<string, TSchema> = {
   ChatHistoryParams: ChatHistoryParamsSchema,
   ChatSendParams: ChatSendParamsSchema,
   ChatAbortParams: ChatAbortParamsSchema,
+  ChatResultParams: ChatResultParamsSchema,
   ChatInjectParams: ChatInjectParamsSchema,
   ChatEvent: ChatEventSchema,
   UpdateRunParams: UpdateRunParamsSchema,
