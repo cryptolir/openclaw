@@ -23,6 +23,7 @@ import {
   normalizeNotifyOutput,
   runExecProcess,
 } from "./bash-tools.exec-runtime.js";
+import { applyScriptEnv } from "./bash-tools.exec-script-env.js";
 import type { ExecToolDetails } from "./bash-tools.exec-types.js";
 
 export type ProcessGatewayAllowlistParams = {
@@ -44,6 +45,11 @@ export type ProcessGatewayAllowlistParams = {
   maxOutput: number;
   pendingMaxOutput: number;
   trustedSafeBinDirs?: ReadonlySet<string>;
+  /** The gateway's own environment, before the model's env was merged over it. */
+  baseEnv?: Record<string, string>;
+  /** The keys the model set through the exec tool's env parameter. */
+  modelEnvKeys?: string[];
+  scriptEnv?: "all" | "report" | "declared";
 };
 
 export type ProcessGatewayAllowlistResult = {
@@ -63,6 +69,19 @@ export async function processGatewayAllowlist(
   const askFallback = approvals.agent.askFallback;
   if (hostSecurity === "deny") {
     throw new Error("exec denied: host=gateway security=deny");
+  }
+  // In allowlist mode the model's env never reaches a script (exec-secret-keys plan §2.2, I42):
+  // `env: {"HUBSPOT_API_BASE": ...}` would otherwise point a script's key at another host. The
+  // security is the one enforced here, which folds in exec-approvals.json (K4).
+  if (hostSecurity === "allowlist" && params.modelEnvKeys?.length) {
+    for (const key of params.modelEnvKeys) {
+      if (params.baseEnv && Object.prototype.hasOwnProperty.call(params.baseEnv, key)) {
+        params.env[key] = params.baseEnv[key];
+      } else {
+        delete params.env[key];
+      }
+    }
+    params.warnings.push("Warning: the env parameter is ignored in allowlist mode.");
   }
   const allowlistEval = evaluateShellAllowlist({
     command: params.command,
@@ -266,9 +285,32 @@ export async function processGatewayAllowlist(
   }
 
   let execCommandOverride: string | undefined;
-  // If allowlist uses safeBins, sanitize only those stdin-only segments:
-  // disable glob/var expansion by forcing argv tokens to be literal via single-quoting.
+  // Every allowlist-satisfied command runs as its analyzed argv, single-quoted: no variable, tilde,
+  // glob or brace expansion, so `"$SECRET"` reaches the script as that text and never as the value
+  // (exec-secret-keys plan §2.1, I41). A command that can't be rendered is refused.
+  if (hostSecurity === "allowlist" && analysisOk && allowlistSatisfied) {
+    const literal = buildSafeBinsShellCommand({
+      command: params.command,
+      segments: allowlistEval.segments,
+      segmentSatisfiedBy: allowlistEval.segmentSatisfiedBy,
+      platform: process.platform,
+      quoteAll: true,
+    });
+    if (!literal.ok || !literal.command) {
+      throw new Error(
+        `exec denied: could not render the command literally (${literal.reason ?? "unknown"})`,
+      );
+    }
+    execCommandOverride = literal.command;
+    applyScriptEnv({
+      env: params.env,
+      mode: params.scriptEnv,
+      resolvedPaths: allowlistEval.segments.map((seg) => seg.resolution?.resolvedPath),
+    });
+  }
+  // The safe-bins rewrite below is kept for any path that reaches it without the literal render.
   if (
+    execCommandOverride === undefined &&
     hostSecurity === "allowlist" &&
     analysisOk &&
     allowlistSatisfied &&

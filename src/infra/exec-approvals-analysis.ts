@@ -845,6 +845,8 @@ export function buildSafeBinsShellCommand(params: {
   segments: ExecCommandSegment[];
   segmentSatisfiedBy: ("allowlist" | "safeBins" | "skills" | null)[];
   platform?: string | null;
+  /** Render EVERY segment as its analyzed argv, single-quoted (no expansion anywhere). */
+  quoteAll?: boolean;
 }): { ok: boolean; command?: string; reason?: string } {
   const platform = params.platform ?? null;
   if (isWindowsPlatform(platform)) {
@@ -872,7 +874,7 @@ export function buildSafeBinsShellCommand(params: {
       if (!seg || by === undefined) {
         return { ok: false, reason: "segment mapping failed" };
       }
-      const needsLiteral = by === "safeBins";
+      const needsLiteral = params.quoteAll === true || by === "safeBins";
       rendered.push(needsLiteral ? renderQuotedArgv(seg.argv) : raw.trim());
       segIndex += 1;
     }

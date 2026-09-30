@@ -20,6 +20,8 @@ export type OpenClawSkillMetadata = {
   always?: boolean;
   skillKey?: string;
   primaryEnv?: string;
+  /** Keys a skill's scripts may read without requiring them (tools.exec.scriptEnv=declared). */
+  env?: string[];
   emoji?: string;
   homepage?: string;
   os?: string[];

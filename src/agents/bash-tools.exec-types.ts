@@ -8,6 +8,8 @@ export type ExecToolDefaults = {
   node?: string;
   pathPrepend?: string[];
   safeBins?: string[];
+  /** See ExecToolConfig.scriptEnv. */
+  scriptEnv?: "all" | "report" | "declared";
   agentId?: string;
   backgroundMs?: number;
   timeoutSec?: number;
