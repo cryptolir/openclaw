@@ -10,6 +10,10 @@
 #   B. Liveness      — probe each documented dep that nothing else already probes
 #                      (OpenRouter is covered by models_connectivity_check.sh;
 #                      host/container health by agents_server_diagnostic.sh).
+#   C. Versions      — versions-check.py compares what every server and running
+#                      container has (read daily) with the Targets in
+#                      DEPENDENCIES.md "Pinned versions", and each Target with its
+#                      newest upstream release (looked up weekly, Mondays).
 #
 # Output mirrors models_connectivity_check.sh: it writes two state files that the
 # 06:00 fleet diagnostic ingests for ONE combined email + bug_list AUTOSCAN:
@@ -35,7 +39,7 @@ ISSUES_FILE="${ISSUES_FILE:-/var/tmp/agentglob-deps-issues.txt}"
 DASH_URL="https://app.agentglob.com"
 REGISTRY="europe-west1-docker.pkg.dev/gold-verve-459312-e7/openclaw-gateway/gateway"
 
-report="" ; issues=""
+report="" ; issues="" ; versions_report=""
 add(){ report="${report}$1"$'\n'; }
 iss(){ issues="${issues}$1"$'\n'; }
 row(){ add "$(printf '%-22s | %-10s | %-9s | %s' "$1" "$2" "$3" "$4")"; }
@@ -190,10 +194,35 @@ done <<<"$donor"
 # 5. OpenRouter — deduped (models check owns it).
 row "openrouter" "Y" "n/a" "see MODEL CONNECTIVITY block"
 
+# ── Phase C — versions (DEPENDENCIES.md "Pinned versions") ───────────────────
+# Daily: what every server and container runs is read on every run, so a fix or
+# a hold shows the next morning. The newest upstream versions are looked up
+# weekly (Mondays, or when a cached answer is over 7 days old: --latest-cache).
+# The human decision is made from the bug list: act, or hold the row (Hold until
+# + Note), which versions-check.py turns into a P3 until that date.
+VERSIONS_REPORT="${VERSIONS_REPORT:-/var/tmp/agentglob-versions-report.txt}"
+VERSIONS_ISSUES="${VERSIONS_ISSUES:-/var/tmp/agentglob-versions-issues.txt}"
+VERSIONS_CACHE="${VERSIONS_CACHE:-/var/tmp/agentglob-versions-latest.json}"
+VERSIONS_CHECK="${VERSIONS_CHECK:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/versions-check.py}"
+if [ -n "${DOC:-}" ] && printf '%s' "$DOC" | SSH_KEY="$SSH_KEY" timeout 180 python3 "$VERSIONS_CHECK" \
+     --doc - --report "$VERSIONS_REPORT" --issues "$VERSIONS_ISSUES" --latest-cache "$VERSIONS_CACHE" >/dev/null; then
+  :  # its report is in the file; stderr stays in this job's log
+else
+  iss "ISSUE|P2|versions|-|Version check failed|versions-check.py failed or timed out (180s), or DEPENDENCIES.md could not be read; see /var/log/agentglob-deps.log. The findings shown are from its last good run, if under 8 days old."
+fi
+# A failed run leaves the last good files in place: they stand in for up to 8 days.
+if [ -n "$(find "$VERSIONS_ISSUES" -mmin -$((8*24*60)) 2>/dev/null)" ]; then
+  issues="${issues}$(grep '^ISSUE|' "$VERSIONS_ISSUES")"$'\n'
+  versions_report="$(cat "$VERSIONS_REPORT" 2>/dev/null)"
+fi
+
 # ── Emit + state files (consumed by the 06:00 diagnostic) ─────────────────────
 final="Dependency audit — $(date -u '+%Y-%m-%d %H:%M:%S UTC')
 probe: liveness · timeout ${TIMEOUT_S}s · donor ${KEY_AGENT}@${KEY_HOST}
 
 ${report}"
+[ -n "$versions_report" ] && final="${final}
+
+${versions_report}"
 printf '%s\n' "$final" | tee "$REPORT_FILE"
 printf '%s' "$issues" > "$ISSUES_FILE" 2>/dev/null || true
