@@ -237,6 +237,29 @@ else
   fi
 fi
 
+# 4.5 Email service (Resend) health. The dashboard checks the key, reachability,
+#     the sending domain, quota, and sends that failed in the last 24h
+#     (openclaw-dashboard /api/cron/email-health). This email goes out via Gmail,
+#     not Resend, so it still arrives when Resend is the thing that broke — which
+#     is why the issues go at the TOP and into the SUBJECT, not under the scan.
+EMAIL_ALERTS=""
+if [[ -n "${CRON_SECRET:-}" ]]; then
+  EH_OUT="$(mktemp)"
+  EH_CODE="$(curl -sS --max-time 60 -o "$EH_OUT" -w '%{http_code}' \
+    -H "Authorization: Bearer $CRON_SECRET" "$DASH_URL/api/cron/email-health" 2>/dev/null || echo 000)"
+  if [[ "$EH_CODE" == "200" ]]; then
+    EMAIL_ALERTS="$(python3 -c 'import json,sys
+d=json.load(open(sys.argv[1]))
+for i in d.get("issues",[]):
+    print(("✖ " if i.get("level")=="error" else "⚠ ")+i.get("message",""))' "$EH_OUT" 2>/dev/null \
+      || echo "⚠ email-health answered 200 with an unreadable body")"
+  else
+    EMAIL_ALERTS="⚠ email-health check could not run (HTTP $EH_CODE) — Resend status unknown"
+  fi
+  rm -f "$EH_OUT"
+  echo "→ email health: ${EMAIL_ALERTS:-ok}"
+fi
+
 # 5. Email the report. Subject carries the P0..P3 totals at a glance.
 COUNTS="$(printf '%s\n' "$REPORT" | grep -oE 'Totals:.*' | tail -1)"
 SUBJECT="[AgentGlob] Fleet diagnostic $(date +%F) — ${COUNTS:-scan complete}"
@@ -246,6 +269,7 @@ SUBJECT="[AgentGlob] Fleet diagnostic $(date +%F) — ${COUNTS:-scan complete}"
 # A disk the prune could not clear fails the next roll. The P0 count alone never
 # got it acted on — other P0s keep that count above zero — so name it.
 [[ -n "$DISK_ALERTS" ]] && SUBJECT="⚠ DISK — next image pull will fail — $SUBJECT"
+[[ -n "$EMAIL_ALERTS" ]] && SUBJECT="⚠ EMAIL SERVICE (Resend) — $SUBJECT"
 # Tag first so agents can find every cron email by subject.
 SUBJECT="-cron*AG*- $SUBJECT"
 if command -v msmtp >/dev/null 2>&1; then
@@ -259,6 +283,9 @@ if command -v msmtp >/dev/null 2>&1; then
     fi
     if [[ -n "$DISK_ALERTS" ]]; then
       printf '═══════ ⚠ DISK: THE NEXT IMAGE PULL WILL FAIL ═══════\n%s\nThe image prune ran and could not make room — nothing left is safe for it to remove.\nFind what else is filling the disk; the prune output is right after the scan report.\n\n' "$DISK_ALERTS"
+    fi
+    if [[ -n "$EMAIL_ALERTS" ]]; then
+      printf '═══════ ⚠ EMAIL SERVICE (Resend) ═══════\n%s\nUsers may not be getting sign-in links, invites or reports. Check resend.com (API keys, Domains, Usage).\n\n' "$EMAIL_ALERTS"
     fi
     printf '%s\n\n' "$REPORT"
     printf '═══════ IMAGE PRUNE (ran before the scan) ═══════\n%s\n' "$PRUNE_REPORT"
