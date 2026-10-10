@@ -16,8 +16,15 @@ to the AgentGlob production hosts on Hetzner.
 ```bash
 ssh -i ~/.ssh/hetzner-openclaw root@204.168.223.245   # DevAgents server
 /opt/openclaw-ops/scripts/build-and-push.sh           # builds + pushes from main, auto-tags
-/opt/openclaw-ops/scripts/deploy.sh <tag> all         # rolls all agents on both hosts
 ```
+
+Then pilot the tag on one Agent and promote it (dashboard `POST /api/platform/releases/<tag>/promote`).
+**Prod Agents are rolled one by one by the owner's dashboard Upgrade** (Agent → Overview → Release box,
+openclaw-dashboard #690), not by `deploy.sh`.
+
+> ⚠️ **2026-10-10 — `deploy.sh <tag> all` is no longer the prod roll.** It rolls every Agent on a server,
+> pilots and stopped ones included (#179 review). Step 2 below stays as a reference for what it does; run it
+> only when the owner asks for it.
 
 Then verify:
 
@@ -103,7 +110,7 @@ POST <DASHBOARD_BASE>/api/platform/releases/<tag>/promote     # promote to "stab
 
 ---
 
-## Step 2 — Deploy
+## Step 2 — Deploy (`deploy.sh`, only when the owner asks; prod rolls use the dashboard Upgrade)
 
 Still on the **DevAgents** server:
 
