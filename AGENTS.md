@@ -77,7 +77,7 @@
 - Hetzner servers:
   - Dev host: `204.168.223.245` (`DevAgents`) for development, builds, and deploy orchestration
   - EU prod: `89.167.70.46`
-  - US standby: `5.161.84.219`
+  - US prod: `5.161.84.219`
 - Artifact Registry image:
   - `europe-west1-docker.pkg.dev/gold-verve-459312-e7/openclaw-gateway/gateway`
 - Shared compose file:
@@ -85,23 +85,21 @@
 - Per-Agent env file:
   - `/root/.openclaw/agents/{name}/docker.env`
 - Ops scripts:
-  - build/push from DevAgents server: `/opt/openclaw-ops/scripts/build-and-push.sh <tag>`
-  - deploy from DevAgents server to target server: `/opt/openclaw-ops/scripts/deploy.sh <tag>`
+  - build/push from DevAgents server: `/opt/openclaw-ops/scripts/build-and-push.sh` — let it pick the tag (an explicit tag can overwrite one already in the registry, 2026-09-07)
+  - make a release the default: pilot it on one Agent, then promote it (dashboard `POST /api/platform/releases/<tag>/promote`)
+  - **roll a prod Agent: the owner's per-Agent dashboard Upgrade** (Agent → Overview → Release box, openclaw-dashboard #690)
+  - **do not use `deploy.sh <tag> [1stclaw|2ndclaw|all]` for a prod roll**: it rolls every Agent on a server, pilots and stopped ones included (#179 review). Only when the owner asks.
 - Tag format:
   - `vYYYY.M.D.N`
   - `vYYYY.M.D.N-hotfix`
 - Deploy rule:
   - when asked to deploy gateway/runtime changes, use the tag-based ops scripts above; do not replace this with ad hoc `docker build`, `docker compose up`, or manual image name edits unless the user explicitly asks.
-- Rollout behavior of `deploy.sh`:
+- What `deploy.sh` does, when the owner asks for it:
   - updates `OPENCLAW_IMAGE` in each Agent `docker.env`
   - rolls one Agent at a time
   - health-checks each Agent
   - rolls back on failure
-- Core API keys are default deploy-time secrets and should normally be present for every Agent unless explicitly overridden:
-  - `VENICE_API_KEY`
-  - `OPENAI_API_KEY`
-  - `BRAVE_API_KEY`
-  - `ELEVENLABS_API_KEY`
+- Core API keys are default deploy-time secrets and should normally be present for every Agent unless explicitly overridden. The list is the **Core APIs** set in openclaw-dashboard `docs/TERMINOLOGY.md` (code: `GLOBAL_KEYS` in `lib/agent-constants.ts`); do not copy it here.
 
 ## Build, Test, and Development Commands
 

@@ -1,6 +1,6 @@
 # AgentGlob / OpenClaw — System Architecture & Infrastructure
 
-**Last updated:** 2026-06-11 · **Status:** canonical living document · **Scope:** system architecture + all servers + GCP + edge.
+**Last updated:** 2026-10-10 (§4 dev row and §6 fleet only; other sections not re-checked since 2026-06-11) · **Status:** canonical living document · **Scope:** system architecture + all servers + GCP + edge.
 
 > **This is the canonical system-architecture & design file for AgentGlob.** It is the single
 > source of truth for how the system is built and run, and the index to every feature / process
@@ -189,7 +189,7 @@ management".
 
 | Role            | IP                | SSH alias¹           | Specs            | Disk         | Uptime | What runs                                                                                                        |
 | --------------- | ----------------- | -------------------- | ---------------- | ------------ | ------ | ---------------------------------------------------------------------------------------------------------------- |
-| **Dev / Build** | `204.168.223.245` | — (run scripts here) | 8 vCPU · 30 GiB  | 226 GB (81%) | ~67 d  | Gateway image builds, all git repos, dev Postgres + MySQL, 1 dev agent `main`. Coolify present but **inactive**. |
+| **Dev / Build** | `204.168.223.245` | — (run scripts here) | 8 vCPU · 30 GiB  | 226 GB (81%) | ~67 d  | Gateway image builds, all git repos, dev Postgres + MySQL. Dev Agents running 2026-10-10: `social-bob` (moved here from US at the 2026-09-28 cutover), `ceyo-drafter`, `feedback`; the other Ceyo Agents are stopped. The 06:00 diagnostic covers it as host `dev` (#142). Coolify present but **inactive**. |
 | **EU Prod**     | `89.167.70.46`    | `1stclaw` (default)  | 4 vCPU · 7.6 GiB | 75 GB (44%)  | ~98 d  | 12 production agent gateways. **RAM ~7.5/7.6 GiB.**                                                              |
 | **US Prod**     | `5.161.84.219`    | `2ndclaw`            | 2 vCPU · 7.6 GiB | 75 GB (61%)  | ~97 d  | 12 agent gateways + **Graphiti memory stack**. **RAM ~7.2/7.6 GiB.**                                             |
 
@@ -224,20 +224,31 @@ the live one.
 
 ---
 
-## 6. Agent fleet (24 live gateways)
+## 6. Agent fleet (30 running prod Agents, 2026-10-10)
 
 Each agent = its own `docker compose` project named after the agent. The gateway container
 `<agent>-openclaw-gateway-1` listens on container port `18789` (WS), published to a unique
 host port. Config lives at `/root/.openclaw/agents/<agent>/openclaw.json` with secrets in
 `/root/.openclaw/agents/<agent>/docker.env`.
 
-### EU (`89.167.70.46`) — 13 agents; 12 on `gateway:v2026.07.10.1`, `tamnon` on stale `openclaw:v2026.05.05.1`
+Snapshot from `docker ps`, 2026-10-10. The stable release is `gateway:v2026.09.09.1`. The daily Version check
+(#179) lists who is behind it in the bug list's AUTOSCAN block, so trust that over this table. Roll a prod
+Agent with the owner's dashboard Upgrade, not `deploy.sh` (see `agentglob-gateway-release.md`).
 
-`braveisrael, cashtronics, my-pa, mystory, onlyclaw, researcher, specy, stillasystems, testingbot, thebook, tzahi1, wellwell` on `gateway:v2026.07.10.1` (mikyhelper + kycbot deleted; a `main` agent dir exists with no running container). ⚠️ `tamnon` runs a **bare local image `openclaw:v2026.05.05.1`** (not the registry `gateway` image) — set up outside the deploy flow and **deliberately held out of the 2026-07-10 roll** (docker.env moved aside during deploy, restored after; container untouched). Bring it onto the registry image or confirm it's intentionally pinned (bug_list OB-17).
+### EU (`89.167.70.46`) — 16 running (15 OpenClaw + 1 Hermes)
 
-### US (`5.161.84.219`) — 12 agents, all on `gateway:v2026.07.10.1`
+- `gateway:v2026.9.1.1` (11): agent-1, cashtronics, elliotbot, elliotsbot, masalla-triage, sandbox-probe-test, specy, tamnon, thebook, tzahi1, wellwell
+- `gateway:v2026.09.09.1` (2): onlyclaw, vidoman · local `openclaw:v2026.09.09.1` (1): calendar-demo-pkpiii
+- `gateway:v2026.9.7.1` (1): testingbot · `hermes-agent:v1` (1): hermes007
+- Stopped: researcher (since 2026-09-07)
 
-`agentav, bob-the-project-manager, designer, familyorganizer, gems, jim-the-ceo, life, projectmanager, raingame, social-bob, thebook, vcode1bot` (productguy deleted 2026-06-10 — invalid bot token). **`life` re-unified onto the fleet image on the 2026-07-10 roll** — the per-user stack + memory-recall (#68/#71/#74/#90) and app-prompt slimming all merged to main, so `v2026.07.10.1` (built from main HEAD `20ddd6dc2`) carries them; life's host-only extensions + graphiti stack are bind-mounted/separate and survive the image swap. Rollback: `docker.env.bak` → `v2026.06.30.1`.
+### US (`5.161.84.219`) — 14 running (13 OpenClaw + 1 Hermes)
+
+- `gateway:v2026.9.4.1` (11): agentav, avrihelper, designer, familyorganizer, familyorgenizer, jim-the-ceo, life, raingame, support, thebook, vcode1bot
+- `gateway:v2026.09.29.1` (1): gems · `gateway:v2026.9.7.2` (1): projectmanager · `hermes-agent:v1` (1): hermi
+- Stopped: social-bob (the old copy; it runs on dev since 2026-09-28)
+
+History (2026-07-10):
 
 > **2026-07-10 roll — `gateway:v2026.07.10.1`** (source `20ddd6dc2`): ships **OB-16** fallback-on-unresolvable-primary (openclaw #98) + **Venice per-token pricing** (openclaw #100, already on main ahead of #98). Rolled EU (12) + US (12) one-at-a-time, health-checked. Smoke: testingbot/projectmanager/life `smoke-ok`; **life `appUserId` app-path verified** (`chat.send ✓`, the v2026.06.27.1 defective-build canary) since this was a normal cached build. Rollback tags: EU `v2026.06.10.1`, life `v2026.06.30.1`. ⚠️ `v2026.06.27.1` was a DEFECTIVE build (corrupted dist → gateway `chat.send` rejected the app's `appUserId` param → app chat 502, Telegram unaffected); rebuilt clean with `--no-cache` → `v2026.06.30.1`. **Lesson: build-and-push.sh layer cache can emit a bad image from good source — smoke MUST include an `appUserId` payload.**
 >

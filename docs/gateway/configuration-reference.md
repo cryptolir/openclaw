@@ -1427,6 +1427,7 @@ Controls elevated (host) exec access:
       cleanupMs: 1800000,
       notifyOnExit: true,
       notifyOnExitEmptySuccess: false,
+      scriptEnv: "all", // "all" | "report" | "declared"
       applyPatch: {
         enabled: false,
         allowModels: ["gpt-5.2"],
@@ -1435,6 +1436,8 @@ Controls elevated (host) exec access:
   },
 }
 ```
+
+- `scriptEnv`: the environment an allowlisted script gets (allowlist mode only). `"all"` (default) passes the gateway's environment; `"report"` does too and logs the key names the script would lose under `"declared"`; `"declared"` passes only the always-passed names (`PATH`, `HOME`, locale, `TZ`, `OPENCLAW_SESSION_KEY`, …) and the keys the script's skill declares (`requires.env`, `primaryEnv`, `env`). Run `"report"` first and read its log before switching to `"declared"`.
 
 ### `tools.loopDetection`
 
