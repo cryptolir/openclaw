@@ -1,12 +1,20 @@
 # Gateway memory — native plugin loading + a heap cap (OB-14)
 
-> **Status:** Rev 1 — plan for review · **Created:** 2026-10-11 · **Owner go-ahead:** 2026-10-11
+> **Status:** Rev 2 — folds Codex round 1 (F1–F3) · **Created:** 2026-10-11 · **Owner go-ahead:** 2026-10-11
 >
 > **Bug list:** OB-14 (per-gateway caps), OB-9 (host RAM over-commit) in `openclaw-dashboard`
 > `docs/ops/bug_list.md`. Replaces the reverted B3 of `channel-error-hardening.md`.
 > **Repo:** `cryptolir/openclaw` only. No gateway image build, no fleet image roll.
 
 ---
+
+## Rev 2 — Codex round 1
+
+| #   | Finding                                                                                                   | Disposition                                                                                                                                                                                                                                                                                                        |
+| --- | --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| F1  | P2: the boot gate passes a transpiling image, since the default loader boots at 704 MB and the cap is 768 | **Folded.** The gate now asserts native loading directly: at most 5 `[transpile]` events (native: 1; default loader: 480) and peak RSS ≤ 600 MB (native ≤ 478; default ≥ 934). T2 now proves it fails the default loader at the compose cap. §3.4, §6.                                                             |
+| F2  | P1: step 5 bypasses the dashboard Upgrade path that AGENTS.md requires for prod rolls                     | **Folded** as an explicit owner exception. AGENTS.md allows `docker compose up` when the user explicitly asks. Upgrade changes the image and recreates from the host's current compose, so it cannot apply an unmerged compose change, and merging first is F3. Its safeguards are matched in §5.                  |
+| F3  | P1: after the merge, unrelated deploys spread the change ahead of the ordered rollout                     | **Folded.** The implementation PR now merges **last**, after every running Agent already runs the change. Until then every dashboard path recreates from the host's unchanged compose, so it can only revert an Agent (the safe direction), never advance one. A sweep after the merge catches reverts. §4 I5, §5. |
 
 ## 1. Problem (measured 2026-10-11)
 
@@ -127,15 +135,26 @@ command: [
 
 ### 3.4 Boot gate: `scripts/ops/gateway-boot-check.sh <image>`
 
-This script boots `<image>` exactly as compose will, with the same heap flag (read from the
-compose file) and `JITI_TRY_NATIVE=1`. It uses `--network none` and a throwaway state dir. It passes
-only if the gateway logs `listening on ws://` within 90 s and is still running 20 s later. The
-script is ~30 lines and is the DevAgents tool behind every number in this plan.
+This script boots `<image>` as compose will: the heap flag value is read from the compose file, and
+`JITI_TRY_NATIVE=1` is set. It runs with `--network none`, a throwaway state dir and
+`JITI_DEBUG=1`. It passes only if all four hold:
+
+1. The gateway logs `listening on ws://` within 90 s.
+2. It is still running 20 s later.
+3. The log has **at most 5 `[jiti] [transpile]` events** (native today: 1; default loader: 480).
+4. **Peak RSS (VmHWM) is ≤ 600 MB** (native: 386–478; default loader: ≥ 934 even when capped at
+   704).
+
+Checks 3 and 4 make this a test of native loading, not just of booting (Rev 2, F1). The default
+loader boots at 704 MB, so "boots under 768" alone would pass exactly the image this gate exists to
+stop. The script is ~40 lines and is the DevAgents tool behind every number in this plan.
 
 It is called from `/opt/openclaw-ops/scripts/build-and-push.sh` between `docker build` and
-`docker push`: a failing image is never pushed or registered, so it can never be rolled. Every
-image passes through that script, and since `STATUS.md` (Deploy Rules) prod image rolls are the
-owner's per-Agent dashboard **Upgrade** (not `deploy.sh`), it is the one gate all paths share.
+`docker push`, so a failing image is never pushed or registered and can never be rolled. Every
+image passes through that script. Since `STATUS.md` (Deploy Rules), prod image rolls are the owner's
+per-Agent dashboard **Upgrade** (not `deploy.sh`), so this is the one gate all paths share. The hook
+is installed in rollout step 6, once the script is on `main`, because the hook runs it from the
+main checkout.
 
 The gate protects against a future image that stops loading the SDK natively. That image would
 fall back to transpiling, need ~700 MB at boot, and crash-loop under 768 on every Agent the owner
@@ -156,40 +175,60 @@ predates this plan and goes on the bug list. The edit keeps a `.bak` and is reco
   would show as failed memory calls, not leaked ones. Verify that the first real memory call after
   the change succeeds.
 - **I4** Only the gateway process gets the flag (§3.2).
-- **I5** The shared `/opt/openclaw/docker-compose.yml` on a host changes only after the canary
-  stages pass (§5). A merge reaches hosts uncontrolled: the dashboard deploy route pulls `main` into
-  `/opt/openclaw` before every Agent deploy.
+- **I5** The change merges only after every running Agent already runs it (§5; Rev 2, F3). A merge
+  reaches hosts uncontrolled: the dashboard deploy route runs `git pull --rebase origin main` in
+  `/opt/openclaw` before recreating. Until the merge, every dashboard path recreates from the host's
+  unchanged `/opt/openclaw/docker-compose.yml`: per-Agent Upgrade, platform upgrade, verify-model,
+  Secrets save (all `up -d --force-recreate`) and deploy. So those paths can revert an Agent to
+  today's config, never advance one.
 - **I6** This rollout writes no `docker.env`.
 
 ## 5. Rollout
 
-1. **Implementation PR**: the compose diff, `gateway-boot-check.sh`, and its test (§6).
-2. **Canary, `testingbot`** (EU, Node 24), run from the PR branch so nothing shared changes. Copy
-   the PR's compose to `/root/ob14-canary/` on EU and run
-   `docker compose -p testingbot --env-file /root/.openclaw/agents/testingbot/docker.env -f /root/ob14-canary/docker-compose.yml up -d openclaw-gateway`.
-   The compose has no relative paths, so it resolves identically. Gates: I1; VmHWM < 600 MB; I2
-   against the pre-change log; public-chat `smoke-ok`; one hour clean.
-3. **Cohort**, same method, 24 h. Three internal Agents that cover Node 22, Telegram and
-   mcp-bridge servers: `cashtronics` (EU), `support` (US) and `vcode1bot` (US; filesystem, brave and
-   github MCPs). Same gates.
-4. **Merge**, then bring each host's checkout up to `main`. This lands only the change plus commits
-   already on `main`: EU is 2 commits behind (ops scripts), US is 25 behind (incl. three merged
-   compose env additions #160/#161/#168, all empty for these Agents). Use
-   `git -C /opt/openclaw pull --ff-only`; both checkouts are clean, and never `stash -u` (OB-43).
-5. **Roll the rest**, one Agent at a time:
-   `cd /opt/openclaw && docker compose -p <a> --env-file /root/.openclaw/agents/<a>/docker.env up -d openclaw-gateway`.
-   This is the same command the dashboard and `deploy.sh` use, with the image unchanged. Apply the
-   per-Agent gates from I1 and I2, stop at the first failure, and keep restarts out of minute :16–:17
-   (the hourly watchdog `docker start`s any exited gateway). On US, wait for load < 2 before the
-   next one. EU first, then US. Last, each verified on its own: `life` (I3), `projectmanager` and
-   `calendar-demo-pkpiii` (the Google Calendar review Agents).
-6. **Do not start** the stopped gateways (`researcher` EU, `social-bob` US). They pick up the change
-   at their next deploy.
+**Owner exception (Rev 2, F2).** AGENTS.md routes prod rolls through the per-Agent dashboard
+Upgrade, and allows a direct `docker compose up` only when the user explicitly asks. Approving this
+plan is that ask, for this rollout only. Upgrade does not fit here: it changes the image and
+recreates from the host's current compose, so it cannot apply a compose change that is not on
+`main`, and putting it on `main` first is F3. Upgrade's safeguards, matched:
 
-**Rollback.** Before step 4, recreate the Agent from `/opt/openclaw/docker-compose.yml`, which is
-still unchanged. For one Agent after the merge, set `OPENCLAW_JITI_TRY_NATIVE=0` or raise
-`OPENCLAW_MAX_OLD_SPACE_MB` through the dashboard Secrets tab (a fenced write), then recreate. For
-the whole fleet, revert the PR, `pull --ff-only`, and recreate.
+| Upgrade                                 | This rollout                                                                                                                                                                                                           |
+| --------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| per-Agent deploy lock                   | one Agent at a time. The owner pauses dashboard actions on Agents (Upgrade, deploy, Secrets save, verify-model) on both hosts for the window. A missed pause can only revert an Agent, which the step 6 sweep catches. |
+| health check: WS connect to the gateway | HTTP 200 on the gateway port; still up 60 s later with `RestartCount` unchanged; VmHWM < 600 MB; no `heap out of memory` or error lines; plugin, tool and channel lines equal to the saved pre-change baseline (I2)    |
+| on failure: revert docker.env, recreate | on failure: stop the rollout and recreate that Agent from `/opt/openclaw/docker-compose.yml` (unchanged)                                                                                                               |
+
+1. **Implementation PR**: the compose diff, the boot gate, and their tests. It is Codex-reviewed
+   and **not merged** until step 6.
+2. **Stage the compose.** Copy the PR's `docker-compose.yml` to
+   `/opt/openclaw-ob14/docker-compose.yml` on each host. It has no relative paths (verified), so it
+   resolves exactly as `/opt/openclaw` does. Per Agent:
+   `docker compose -p <a> --env-file /root/.openclaw/agents/<a>/docker.env -f /opt/openclaw-ob14/docker-compose.yml up -d openclaw-gateway`.
+   The image does not change, and `docker.env` is not touched. Keep out of minute :16–:17 (the
+   hourly watchdog `docker start`s any exited gateway). On US, wait for load < 2 before the next
+   one.
+3. **Canary `testingbot`** (EU, Node 24). The gates above, plus public-chat `smoke-ok`, and one hour
+   clean.
+4. **Cohort**, 24 h: `cashtronics` (EU), `support` and `vcode1bot` (US). These internal Agents cover
+   Node 22, Telegram and mcp-bridge servers (filesystem, brave, github).
+5. **Roll the rest** one at a time, EU then US, and stop at the first failure. Last, each verified on
+   its own: `life` (I3), `projectmanager` and `calendar-demo-pkpiii` (the Google Calendar review
+   Agents).
+6. **Merge**, then run `git -C /opt/openclaw pull --ff-only` on both hosts. EU gains 2 ops-only
+   commits; US gains 25, including the merged compose env additions #160/#161/#168, which are empty
+   for these Agents. Never `stash -u` (OB-43).
+   **Sweep:** every running gateway's `Config.Cmd` must carry the flag and its `Config.Env`
+   `JITI_TRY_NATIVE=1`. Recreate any straggler from `/opt/openclaw` with the same gates.
+   Then install the boot gate in `build-and-push.sh`, delete `/opt/openclaw-ob14` and end the pause.
+7. **Stopped gateways** (`researcher` EU, `social-bob` US) stay stopped and pick up the change at
+   their next deploy.
+
+US Agents created before #160/#161/#168 also gain those empty env entries when they are recreated,
+which is what any dashboard deploy would do.
+
+**Rollback.** Before step 6: recreate the Agent from `/opt/openclaw/docker-compose.yml`. After step
+6, for one Agent: set `OPENCLAW_JITI_TRY_NATIVE=0` or raise `OPENCLAW_MAX_OLD_SPACE_MB` through the
+dashboard Secrets tab, which is a fenced write and recreates the gateway itself. For the whole
+fleet: revert the PR, `pull --ff-only`, and recreate.
 
 **Done when**, 7 days after step 5: no `FatalProcessOutOfMemory` anywhere; no unplanned restarts
 (the daily diagnostic's restart-delta already reports them); boot peaks < 600 MB; host swap flat
@@ -201,9 +240,10 @@ the whole fleet, revert the PR, `pull --ff-only`, and recreate.
   gateway `command` carries `--max-old-space-size=${OPENCLAW_MAX_OLD_SPACE_MB:-768}` as the argument
   right before `dist/index.js`. `JITI_TRY_NATIVE: ${OPENCLAW_JITI_TRY_NATIVE:-1}` is in the gateway
   env. `openclaw-cli` has neither. Lives beside the existing `scripts/ops/test_*.py`.
-- **T2** The boot gate fails closed. On DevAgents it passes a current image and fails the known
-  crash, the default loader at `--max-old-space-size=512` (exit 139, `FatalProcessOutOfMemory`). The
-  impl PR shows both runs. CI cannot run it: it needs docker and the 8.7 GB images.
+- **T2** The boot gate fails closed on exactly the case it exists for (Rev 2, F1). On DevAgents it
+  passes every current image with `JITI_TRY_NATIVE=1`, and fails the same image with the default
+  loader at the compose cap (768). That image boots, but logs ~480 transpiles and peaks above
+  900 MB. The impl PR shows both runs. CI cannot run it: it needs docker and the 8.7 GB images.
 
 ## 7. Deliberately not building
 
@@ -232,5 +272,7 @@ the whole fleet, revert the PR, `pull --ff-only`, and recreate.
    would we see it?
 6. Is `build-and-push.sh` really the only path to a rolled image? Does the dashboard Upgrade's own
    health check catch a crash-loop if one slips through?
-7. After the merge, can any path recreate an Agent with the new compose before step 5 reaches it,
-   and is that safe?
+7. Before the merge, can any path advance an Agent to the new config outside steps 2–5? After the
+   merge, does the step 6 sweep catch every Agent that a missed pause reverted?
+8. Can a dashboard action racing a step 2 recreate on the same Agent leave anything half-applied,
+   rather than simply old or new?
