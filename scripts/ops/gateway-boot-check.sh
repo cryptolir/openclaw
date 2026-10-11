@@ -67,7 +67,9 @@ boot() {
   for _ in $(seq 1 45); do
     sleep 2
     [[ "$(docker inspect -f '{{.State.Status}}' "$c")" == running ]] || break
-    docker logs "$c" 2>&1 | grep -q "listening on ws://" && { up=yes; break; }
+    # grep -c reads to the end: grep -q would exit early, SIGPIPE docker logs, and under pipefail
+    # a healthy boot would read as "not up"
+    (( $(docker logs "$c" 2>&1 | grep -c "listening on ws://") > 0 )) && { up=yes; break; }
   done
   [[ $up == yes ]] && sleep 20 # post-listen boot work (plugin activation, MCP servers)
   echo "$up $(( $(date +%s) - t0 ))" > "$WORK/$run.up"
