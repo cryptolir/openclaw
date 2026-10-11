@@ -1,6 +1,6 @@
 # Gateway memory — native plugin loading + a heap cap (OB-14)
 
-> **Status:** Rev 3 — folds Codex rounds 1–2 (F1–F5) · **Created:** 2026-10-11 · **Owner go-ahead:** 2026-10-11
+> **Status:** Rev 4 — folds Codex rounds 1–3 (F1–F7) · **Created:** 2026-10-11 · **Owner go-ahead:** 2026-10-11
 >
 > **Bug list:** OB-14 (per-gateway caps), OB-9 (host RAM over-commit) in `openclaw-dashboard`
 > `docs/ops/bug_list.md`. Replaces the reverted B3 of `channel-error-hardening.md`.
@@ -22,6 +22,13 @@
 | --- | ----------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | F4  | P1: `--max-old-space-size` bounds only V8 old space; native/external growth or an MCP child stays unbounded | **Folded.** Adds a cgroup bound, `mem_limit: 1536m`, safely above the verified boot peak (§3.2). With the explicit heap flag, Node no longer derives its heap from the cgroup, which was the B3 trap. Measured: 1536m + flag 1024 → `heap_size_limit` 1048 MB; with no flag, 792 MB. "Done when" gains an early check that tells heap growth from non-heap growth (§5). |
 | F5  | P2: HTTP 200 is weaker than Upgrade's WebSocket health check                                                | **Folded.** The per-Agent gate now runs the gateway's own authenticated WebSocket RPC, `node dist/index.js health`, inside the container with its own token. On DevAgents it exits 0 with the right token and 1 with a wrong one. §4 I1, §5.                                                                                                                            |
+
+## Rev 4 — Codex round 3
+
+| #   | Finding                                                                 | Disposition                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| --- | ----------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| F6  | P2: the boot gate's empty state exercises only the 4 default plugins    | **Folded.** The gate now enables **every bundled plugin** (all 37 ids in the image) plus the repo-tracked host extensions, `mcp-bridge` and `life-memory-scope`. It also boots the default loader as a reference and requires the same set of plugins to fail to load. Measured at this coverage: native peak 596 MB, 0 transpiles of `dist`/`node_modules`, and the failed set identical across modes (7 plugins missing optional deps). §3.1, §3.4. |
+| F7  | P2: raising only the heap cap breaks the `mem_limit ≥ heap + 768m` rule | **Folded.** Rollback is now three **tested** sets of values, one per symptom, each keeping the rule. This also fixes a latent bug: `JITI_TRY_NATIVE=0` under the 768 cap could not have booted, since the default loader needs ~700 MB of heap. §5 Rollback.                                                                                                                                                                                          |
 
 ## 1. Problem (measured 2026-10-11)
 
@@ -95,6 +102,22 @@ Both modes load the same four bundled entry points (`device-pair`, `memory-core`
 `extensions/memory-core/index.ts` falls back to transpile, because native resolution fails with
 `ERR_MODULE_NOT_FOUND`: one file, 109 ms.
 
+**At full coverage (Rev 4, F6).** The same comparison was run with every bundled plugin enabled (37
+ids), plus `mcp-bridge` and `life-memory-scope`, on `v2026.9.1.1`:
+
+|                                    | default loader, uncapped | native, 768 / 1536m |
+| ---------------------------------- | ------------------------ | ------------------- |
+| peak RSS                           | 1290 MB                  | 596 MB              |
+| transpiled `dist` / `node_modules` | 60 / 419                 | 0 / 0               |
+| transpiled extension sources       | 274                      | 195                 |
+| plugins that fail to load          | 7                        | the same 7          |
+
+Most extension `.ts` files fall back to transpile under native loading: Node's resolver will not
+map their `./x.js` imports to `x.ts`. They are small. The heavy part, the gateway's own graph,
+loads natively. The 7 plugins that fail (`diagnostics-otel`, `googlechat`, `matrix`,
+`memory-lancedb`, `nostr`, `tlon`, `twitch`) fail identically in both modes on missing optional
+deps. That predates this plan.
+
 **The behaviour change to attack:** plugins now share the gateway's own module instances of `dist/*`
 and `node_modules`. Until now they got a separate transpiled copy.
 
@@ -136,7 +159,9 @@ environment:
   # OB-14 (docs/experiments/plans/gateway-memory-ob14.md): load plugins with Node's own loader.
   # Without it jiti Babel-transpiles a second copy of the gateway's dependency graph on every
   # fresh boot (482 files, ~650 MB live heap, 1.3–2.3 GB peak RSS). Escape hatch per Agent:
-  # OPENCLAW_JITI_TRY_NATIVE=0 in its docker.env restores the old loader.
+  # OPENCLAW_JITI_TRY_NATIVE=0 restores the old loader. Set it ONLY together with the tested
+  # native-off heap/memory values in the plan's Rollback table: the old loader cannot boot
+  # under the default 768 heap cap.
   JITI_TRY_NATIVE: ${OPENCLAW_JITI_TRY_NATIVE:-1}
 # …
 # OB-14: a backstop for what the heap flag below does not bound (native memory, Buffers, MCP
@@ -164,32 +189,52 @@ command: [
 
 ### 3.4 Boot gate: `scripts/ops/gateway-boot-check.sh <image>`
 
-This script boots `<image>` as compose will: the heap flag and `mem_limit` defaults are read from the
-compose file, and `JITI_TRY_NATIVE=1` is set. It runs with `--network none`, a throwaway state dir and
-`JITI_DEBUG=1`. It passes only if all four hold:
+The gate boots `<image>` twice, with `--network none`, `JITI_DEBUG=1` and a throwaway state dir.
 
-1. The gateway logs `listening on ws://` within 90 s.
-2. It is still running 20 s later.
-3. The log has **at most 5 `[jiti] [transpile]` events** (native today: 1; default loader: 480).
-4. **Peak RSS (VmHWM) is ≤ 600 MB** (native: 386–478; default loader: ≥ 934 even when capped at
-   704).
+**The state dir** enables **every bundled plugin**: each `id` from the image's
+`/app/extensions/*/openclaw.plugin.json`, as `plugins.entries.<id>.enabled: true`. It also carries
+the host extensions that are in a repo: `mcp-bridge` (`openclaw-dashboard/assets/mcp-bridge`) and
+`life-memory-scope` (`ops/graphiti-life/extensions`) (Rev 4, F6).
+
+**The two boots:**
+
+- **A (as prod)** uses `JITI_TRY_NATIVE=1` and the heap-flag and `mem_limit` defaults, both read
+  from the compose file.
+- **B (reference)** uses the default loader, uncapped.
+
+**It passes only if every check holds:**
+
+1. A logs `listening on ws://` within 90 s, is still running 20 s later, and was not OOM-killed.
+2. Inside A, `node --max-old-space-size=256 dist/index.js health` exits 0. That is the
+   authenticated WS RPC from F5.
+3. A transpiles **nothing under `dist/` or `node_modules/`**, so the gateway's own graph loaded
+   natively. Measured: native 0 / 0, default loader 60 / 419. This replaces Rev 2's "≤ 5
+   transpiles", which every real config would fail.
+4. A's **peak RSS ≤ 800 MB**. Measured: native at full coverage 596–610 MB; default loader
+   1088–1290 MB.
+5. **A and B fail to load the same set of plugins.** Native loading may not lose a plugin.
+   Measured: the same 7 in every mode and cap tested.
 
 Checks 3 and 4 make this a test of native loading, not just of booting (Rev 2, F1). The default
 loader boots at 704 MB, so "boots under 768" alone would pass exactly the image this gate exists to
-stop. The script is ~40 lines and is the DevAgents tool behind every number in this plan.
+stop. The script is ~60 lines and is the DevAgents tool behind every number in this plan.
 
-It is called from `/opt/openclaw-ops/scripts/build-and-push.sh` between `docker build` and
-`docker push`, so a failing image is never pushed or registered and can never be rolled. Every
-image passes through that script. Since `STATUS.md` (Deploy Rules), prod image rolls are the owner's
+**Not covered:** host extensions that are in no repo, `life-access-scope` (US `life` only) and
+`model-router` (EU canonical dir). That gap predates this plan and goes on the bug list; the
+per-Agent gates in §5 still exercise them on their own Agents.
+
+**Where it runs:** from `/opt/openclaw-ops/scripts/build-and-push.sh`, between `docker build` and
+`docker push`, so a failing image is never pushed or registered and can never be rolled. Every image
+passes through that script. Since `STATUS.md` (Deploy Rules), prod image rolls are the owner's
 per-Agent dashboard **Upgrade** (not `deploy.sh`), so this is the one gate all paths share. The hook
 is installed in rollout step 6, once the script is on `main`, because the hook runs it from the
 main checkout.
 
-The gate protects against a future image that stops loading the SDK natively. That image would
-fall back to transpiling, need ~700 MB at boot, and crash-loop under 768 on every Agent the owner
-upgrades: B3 again, one click at a time. `build-and-push.sh` is host-only (not in git). That gap
-predates this plan and goes on the bug list. The edit keeps a `.bak` and is recorded in `STATUS.md`
-"Hosts, by hand".
+**Same gap as before:** a future image that stops loading the SDK natively would fall back to
+transpiling, need ~700 MB at boot, and crash-loop under 768 on every Agent the owner upgrades: B3
+again, one click at a time. `build-and-push.sh` itself is host-only (not in git). That gap predates
+this plan and goes on the bug list. The edit keeps a `.bak` and is recorded in `STATUS.md` "Hosts,
+by hand".
 
 ## 4. Invariants
 
@@ -257,10 +302,20 @@ recreates from the host's current compose, so it cannot apply a compose change t
 US Agents created before #160/#161/#168 also gain those empty env entries when they are recreated,
 which is what any dashboard deploy would do.
 
-**Rollback.** Before step 6: recreate the Agent from `/opt/openclaw/docker-compose.yml`. After step
-6, for one Agent: set `OPENCLAW_JITI_TRY_NATIVE=0` or raise `OPENCLAW_MAX_OLD_SPACE_MB` through the
-dashboard Secrets tab, which is a fenced write and recreates the gateway itself. For the whole
-fleet: revert the PR, `pull --ff-only`, and recreate.
+**Rollback.** Before step 6: recreate the Agent from `/opt/openclaw/docker-compose.yml`. For the
+whole fleet: revert the PR, `pull --ff-only`, and recreate.
+
+After step 6, for one Agent, set one **whole** row below through the dashboard Secrets tab (a fenced
+write that also recreates the gateway). Never set a single knob alone (Rev 4, F7). Every row keeps
+`OPENCLAW_MEM_LIMIT ≥ OPENCLAW_MAX_OLD_SPACE_MB + 768m`. Each was booted on DevAgents with all 37
+bundled plugins plus `mcp-bridge` and `life-memory-scope`, and each started, passed `health`, and
+was not OOM-killed:
+
+| Symptom                                  | `OPENCLAW_JITI_TRY_NATIVE` | `OPENCLAW_MAX_OLD_SPACE_MB` | `OPENCLAW_MEM_LIMIT`                       | Measured peak |
+| ---------------------------------------- | -------------------------- | --------------------------- | ------------------------------------------ | ------------- |
+| `heap out of memory` under the 768 cap   | (default 1)                | 1024                        | 1792m                                      | 610 MB        |
+| a plugin misbehaves under native loading | 0                          | 1536                        | 2304m                                      | 1088 MB       |
+| full revert to today for this Agent      | 0                          | 2048                        | 0 (= no cgroup limit, verified in compose) | 1286 MB       |
 
 **Early check, day 3 (Rev 3, F4).** For each gateway, look at RSS+swap and its trend. The heap cap
 allows ~1.0–1.1 GB RSS. If a gateway passes ~1.2 GB, or keeps growing at today's ~30 MB/day once its
@@ -279,10 +334,12 @@ backstop holds until then.
   right before `dist/index.js`. `JITI_TRY_NATIVE: ${OPENCLAW_JITI_TRY_NATIVE:-1}` is in the gateway
   env. The gateway has `mem_limit: ${OPENCLAW_MEM_LIMIT:-1536m}`. `openclaw-cli` has none of the
   three. Lives beside the existing `scripts/ops/test_*.py`.
-- **T2** The boot gate fails closed on exactly the case it exists for (Rev 2, F1). On DevAgents it
-  passes every current image with `JITI_TRY_NATIVE=1`, and fails the same image with the default
-  loader at the compose cap (768). That image boots, but logs ~480 transpiles and peaks above
-  900 MB. The impl PR shows both runs. CI cannot run it: it needs docker and the 8.7 GB images.
+- **T2** The boot gate fails closed on exactly the cases it exists for (Rev 2, F1; Rev 4, F6). On
+  DevAgents it passes every current image. It fails the same image when run A uses the default
+  loader at the compose caps; that run boots, but transpiles `dist`/`node_modules` (60 / 419). It
+  also fails when the failed-plugin sets differ, which is tested by making one bundled plugin's
+  entry unloadable in run A only. The impl PR shows all three runs. CI cannot run it: it needs
+  docker and the 8.7 GB images.
 
 ## 7. Deliberately not building
 
@@ -302,7 +359,7 @@ backstop holds until then.
 2. Can a native attempt run part of a module's top level, fail, and then have jiti run the module
    again transpiled (double registration)?
 3. Can `life`'s memory scoping stop applying without anyone seeing it under native loading?
-4. Does running one Agent from `/root/ob14-canary/docker-compose.yml` change anything shared
+4. Does running one Agent from `/opt/openclaw-ob14/docker-compose.yml` change anything shared
    (networks, labels, volumes, `empty.env`)? Does a later recreate from `/opt/openclaw` put it back
    cleanly?
 5. Is 768 safe for every Agent's live heap at its busiest, not just at boot? What fails first, and
@@ -316,3 +373,5 @@ backstop holds until then.
 9. With `mem_limit: 1536m` and Docker's default swap allowance, can a legitimate peak be OOM-killed:
    page cache charged to the cgroup, a large tool output held in a Buffer, MCP children at boot?
    Is 1536m right for `life` (1.45 GB RSS+swap today, uncapped)?
+10. Is a plugin set that is identical at boot enough evidence of I2, or can a plugin load in both
+    modes and still register different tools or hooks?
