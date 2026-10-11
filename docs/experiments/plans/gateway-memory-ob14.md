@@ -1,6 +1,6 @@
 # Gateway memory — native plugin loading + a heap cap (OB-14)
 
-> **Status:** Rev 4 — folds Codex rounds 1–3 (F1–F7) · **Created:** 2026-10-11 · **Owner go-ahead:** 2026-10-11
+> **Status:** Rev 5 — FINAL. Folds Codex rounds 1–4 (F1–F9). Owner decision 2026-10-11 at the round-4 bound: fold the last two and move to implementation; the impl PR gets its own adversarial review · **Created:** 2026-10-11 · **Owner go-ahead:** 2026-10-11
 >
 > **Bug list:** OB-14 (per-gateway caps), OB-9 (host RAM over-commit) in `openclaw-dashboard`
 > `docs/ops/bug_list.md`. Replaces the reverted B3 of `channel-error-hardening.md`.
@@ -29,6 +29,13 @@
 | --- | ----------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | F6  | P2: the boot gate's empty state exercises only the 4 default plugins    | **Folded.** The gate now enables **every bundled plugin** (all 37 ids in the image) plus the repo-tracked host extensions, `mcp-bridge` and `life-memory-scope`. It also boots the default loader as a reference and requires the same set of plugins to fail to load. Measured at this coverage: native peak 596 MB, 0 transpiles of `dist`/`node_modules`, and the failed set identical across modes (7 plugins missing optional deps). §3.1, §3.4. |
 | F7  | P2: raising only the heap cap breaks the `mem_limit ≥ heap + 768m` rule | **Folded.** Rollback is now three **tested** sets of values, one per symptom, each keeping the rule. This also fixes a latent bug: `JITI_TRY_NATIVE=0` under the 768 cap could not have booted, since the default loader needs ~700 MB of heap. §5 Rollback.                                                                                                                                                                                          |
+
+## Rev 5 — Codex round 4 (final; owner decision at the round bound)
+
+| #   | Finding                                                                                                | Disposition                                                                                                                                                                                                                                                                                                                        |
+| --- | ------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| F8  | P2: a dashboard action during a soak silently reverts the Agent, so the rest of the soak tests nothing | **Folded.** Every 10 min during each soak, assert that the Agent's `Config.Cmd`, `Config.Env` and `HostConfig.Memory` still carry the staged values. On a revert, re-stage the Agent and restart its soak clock. §5 steps 3–4.                                                                                                     |
+| F9  | P2: identical failed-plugin sets can hide a native boot that registers fewer tools, hooks or channels  | **Folded.** Both gate boots also run `node dist/index.js plugins list --json` inside their container. Each `PluginRecord` (`status`, `toolNames`, `hookNames`, `channelIds`, `providerIds`, `gatewayMethods`, `services`, `commands`, `cliCommands`, `httpHandlers`, `hookCount`) must be equal between A and B. §3.4 check 5, T2. |
 
 ## 1. Problem (measured 2026-10-11)
 
@@ -212,8 +219,12 @@ the host extensions that are in a repo: `mcp-bridge` (`openclaw-dashboard/assets
    transpiles", which every real config would fail.
 4. A's **peak RSS ≤ 800 MB**. Measured: native at full coverage 596–610 MB; default loader
    1088–1290 MB.
-5. **A and B fail to load the same set of plugins.** Native loading may not lose a plugin.
-   Measured: the same 7 in every mode and cap tested.
+5. **A and B register the same plugin inventory** (Rev 5, F9). In each boot's container, run
+   `node --max-old-space-size=256 dist/index.js plugins list --json`, which uses the same loader
+   and env. Every plugin's record must be equal between A and B: `status`, `toolNames`,
+   `hookNames`, `channelIds`, `providerIds`, `gatewayMethods`, `services`, `commands`,
+   `cliCommands`, `httpHandlers` and `hookCount`. A loses no plugin and no registration. Measured:
+   the failed set alone was the same 7 in every mode and cap tested.
 
 Checks 3 and 4 make this a test of native loading, not just of booting (Rev 2, F1). The default
 loader boots at 704 MB, so "boots under 768" alone would pass exactly the image this gate exists to
@@ -287,6 +298,14 @@ recreates from the host's current compose, so it cannot apply a compose change t
    clean.
 4. **Cohort**, 24 h: `cashtronics` (EU), `support` and `vcode1bot` (US). These internal Agents cover
    Node 22, Telegram and mcp-bridge servers (filesystem, brave, github).
+
+   **Soak guard, steps 3–4 (Rev 5, F8).** Every 10 min, assert that each soaking Agent's
+   `Config.Cmd` still carries the heap flag, its `Config.Env` has `JITI_TRY_NATIVE=1`, and
+   `HostConfig.Memory` is 1610612736. A dashboard action in the window recreates the Agent from
+   `/opt/openclaw` and silently reverts it. If that happens, re-stage the Agent with the step 2
+   command and restart **its** soak clock from zero. No Agent leaves a soak with less than the full
+   window on the new config.
+
 5. **Roll the rest** one at a time, EU then US, and stop at the first failure. Last, each verified on
    its own: `life` (I3), `projectmanager` and `calendar-demo-pkpiii` (the Google Calendar review
    Agents).
