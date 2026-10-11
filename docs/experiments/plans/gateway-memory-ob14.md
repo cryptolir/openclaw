@@ -1,6 +1,6 @@
 # Gateway memory — native plugin loading + a heap cap (OB-14)
 
-> **Status:** Rev 2 — folds Codex round 1 (F1–F3) · **Created:** 2026-10-11 · **Owner go-ahead:** 2026-10-11
+> **Status:** Rev 3 — folds Codex rounds 1–2 (F1–F5) · **Created:** 2026-10-11 · **Owner go-ahead:** 2026-10-11
 >
 > **Bug list:** OB-14 (per-gateway caps), OB-9 (host RAM over-commit) in `openclaw-dashboard`
 > `docs/ops/bug_list.md`. Replaces the reverted B3 of `channel-error-hardening.md`.
@@ -15,6 +15,13 @@
 | F1  | P2: the boot gate passes a transpiling image, since the default loader boots at 704 MB and the cap is 768 | **Folded.** The gate now asserts native loading directly: at most 5 `[transpile]` events (native: 1; default loader: 480) and peak RSS ≤ 600 MB (native ≤ 478; default ≥ 934). T2 now proves it fails the default loader at the compose cap. §3.4, §6.                                                             |
 | F2  | P1: step 5 bypasses the dashboard Upgrade path that AGENTS.md requires for prod rolls                     | **Folded** as an explicit owner exception. AGENTS.md allows `docker compose up` when the user explicitly asks. Upgrade changes the image and recreates from the host's current compose, so it cannot apply an unmerged compose change, and merging first is F3. Its safeguards are matched in §5.                  |
 | F3  | P1: after the merge, unrelated deploys spread the change ahead of the ordered rollout                     | **Folded.** The implementation PR now merges **last**, after every running Agent already runs the change. Until then every dashboard path recreates from the host's unchanged compose, so it can only revert an Agent (the safe direction), never advance one. A sweep after the merge catches reverts. §4 I5, §5. |
+
+## Rev 3 — Codex round 2
+
+| #   | Finding                                                                                                     | Disposition                                                                                                                                                                                                                                                                                                                                                             |
+| --- | ----------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| F4  | P1: `--max-old-space-size` bounds only V8 old space; native/external growth or an MCP child stays unbounded | **Folded.** Adds a cgroup bound, `mem_limit: 1536m`, safely above the verified boot peak (§3.2). With the explicit heap flag, Node no longer derives its heap from the cgroup, which was the B3 trap. Measured: 1536m + flag 1024 → `heap_size_limit` 1048 MB; with no flag, 792 MB. "Done when" gains an early check that tells heap growth from non-heap growth (§5). |
+| F5  | P2: HTTP 200 is weaker than Upgrade's WebSocket health check                                                | **Folded.** The per-Agent gate now runs the gateway's own authenticated WebSocket RPC, `node dist/index.js health`, inside the container with its own token. On DevAgents it exits 0 with the right token and 1 with a wrong one. §4 I1, §5.                                                                                                                            |
 
 ## 1. Problem (measured 2026-10-11)
 
@@ -36,7 +43,8 @@
 ## 2. Why B3 crashed, and why a cap alone cannot work today
 
 B3 set `mem_limit: 1g` with no heap flag. Node then derives its heap limit from the cgroup limit
-(about a quarter of it, ~256 MB), and the EU fleet crash-looped at boot. The heap flag fixes that
+(about half of it on these versions, ~520 MB; measured 792 MB under 1536m), and the EU fleet
+crash-looped at boot. The heap flag fixes that
 part. Booting is the real obstacle.
 
 Measured on DevAgents with throwaway containers (`--network none`, empty state dir, dummy token,
@@ -97,11 +105,28 @@ gets it. `NODE_OPTIONS` would be inherited by MCP servers, exec-tool children an
 runs, and it is already on exec's `DANGEROUS_HOST_ENV_VARS` list
 (`src/agents/bash-tools.exec-runtime.ts`). The gateway is the container's only node process:
 `docker-entrypoint.sh` execs it, and `entry.ts`'s respawn does not fire. If it ever did, it forwards
-`process.execArgv`. An explicit flag also overrides Node's cgroup-derived default, which disarms the
-B3 trap if a `mem_limit` is added later.
+`process.execArgv`. An explicit flag also overrides Node's cgroup-derived default. That is what makes
+the `mem_limit` below safe, where B3's was not.
 
 **Default 768 MB.** That is twice the native boot need (≤ 384 MB) and above every settled RSS
 measured. It holds a gateway to roughly 0.9–1.0 GB RSS, where today's heap ceiling is ~2.1 GB.
+
+**Plus a cgroup bound, `mem_limit: 1536m` (Rev 3, F4).** Node's docs say `--max-old-space-size`
+limits only V8's old space. RSS also holds native allocations, code, Buffers, and the container's
+MCP children, and the steady growth's cause is unknown (§1). So the container gets a memory bound
+too:
+
+- **Why the flag makes it safe.** Measured on DevAgents (`v2026.9.1.1`): under `--memory=1536m`
+  with no flag, Node derives `heap_size_limit` = 792 MB from the cgroup. That is the B3 trap: a
+  1 GiB limit gives ~520 MB, below the ~650–700 MB boot need. With an explicit flag, the flag wins:
+  1536m + flag 1024 → 1048 MB.
+- **Headroom.** The native boot peak is ≤ 478 MB bare. The steady worst case is about 768 heap +
+  ~300 native + MCP children, roughly 1.3 GB.
+- **What happens at the bound.** Docker's default swap allowance equals `mem_limit`. A runaway is
+  pushed into its own swap first, then OOM-killed at ~3 GiB RAM+swap. It restarts
+  (`unless-stopped`) and shows up in the daily diagnostic's restart-delta.
+- **What it is not.** It is a per-gateway backstop, not the host-wide fix: 15 × 1.5 GB is more than
+  7.6 GB. The host-wide fix is the heap cap, checked by "Done when".
 
 ### 3.3 The compose diff (`docker-compose.yml`, `openclaw-gateway` service only)
 
@@ -114,6 +139,10 @@ environment:
   # OPENCLAW_JITI_TRY_NATIVE=0 in its docker.env restores the old loader.
   JITI_TRY_NATIVE: ${OPENCLAW_JITI_TRY_NATIVE:-1}
 # …
+# OB-14: a backstop for what the heap flag below does not bound (native memory, Buffers, MCP
+# children). Safe ONLY together with the explicit heap flag: without it Node derives the heap
+# from this limit (B3, 2026-06-10). Keep OPENCLAW_MEM_LIMIT >= OPENCLAW_MAX_OLD_SPACE_MB + 768m.
+mem_limit: ${OPENCLAW_MEM_LIMIT:-1536m}
 # OB-14: explicit heap cap. Without it Node sizes the heap from the RAM it sees (~2.1 GB per
 # gateway here), and under a cgroup limit from that limit, which is what crash-looped the EU
 # fleet in B3 (2026-06-10). Depends on JITI_TRY_NATIVE above: the transpiling loader needs
@@ -127,7 +156,7 @@ command: [
   ]
 ```
 
-- Both knobs are interpolation-only. Compose reads them from the Agent's `docker.env` through
+- All three knobs are interpolation-only. Compose reads them from the Agent's `docker.env` through
   `--env-file`, so neither needs an entry in the environment allowlist. No Agent sets either at
   launch.
 - The B3 `NOTE` comment above `command:` is replaced by the one shown.
@@ -135,8 +164,8 @@ command: [
 
 ### 3.4 Boot gate: `scripts/ops/gateway-boot-check.sh <image>`
 
-This script boots `<image>` as compose will: the heap flag value is read from the compose file, and
-`JITI_TRY_NATIVE=1` is set. It runs with `--network none`, a throwaway state dir and
+This script boots `<image>` as compose will: the heap flag and `mem_limit` defaults are read from the
+compose file, and `JITI_TRY_NATIVE=1` is set. It runs with `--network none`, a throwaway state dir and
 `JITI_DEBUG=1`. It passes only if all four hold:
 
 1. The gateway logs `listening on ws://` within 90 s.
@@ -164,8 +193,11 @@ predates this plan and goes on the bug list. The edit keeps a `.bak` and is reco
 
 ## 4. Invariants
 
-- **I1** Every gateway boots under its cap with native loading on. Per image: the boot gate. Per
-  Agent: HTTP 200 on its port, `RestartCount` unchanged, no `heap out of memory` in its log.
+- **I1** Every gateway boots under its caps with native loading on. Per image: the boot gate. Per
+  Agent: `docker exec <c> node --max-old-space-size=256 dist/index.js health` exits 0. That is the
+  gateway's own authenticated WebSocket RPC, using the container's own token, so no secret leaves
+  the container (Rev 3, F5). Also: HTTP 200 on its port, `RestartCount` unchanged, and no
+  `heap out of memory` or OOM kill (`State.OOMKilled`) in its log or state.
 - **I2** No Agent loses a plugin, tool or channel. Its boot log before and after the change shows
   the same plugin registrations, `[mcp-bridge] Registered tool` count, channel `starting provider`
   lines and skill warnings.
@@ -191,11 +223,11 @@ plan is that ask, for this rollout only. Upgrade does not fit here: it changes t
 recreates from the host's current compose, so it cannot apply a compose change that is not on
 `main`, and putting it on `main` first is F3. Upgrade's safeguards, matched:
 
-| Upgrade                                 | This rollout                                                                                                                                                                                                           |
-| --------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| per-Agent deploy lock                   | one Agent at a time. The owner pauses dashboard actions on Agents (Upgrade, deploy, Secrets save, verify-model) on both hosts for the window. A missed pause can only revert an Agent, which the step 6 sweep catches. |
-| health check: WS connect to the gateway | HTTP 200 on the gateway port; still up 60 s later with `RestartCount` unchanged; VmHWM < 600 MB; no `heap out of memory` or error lines; plugin, tool and channel lines equal to the saved pre-change baseline (I2)    |
-| on failure: revert docker.env, recreate | on failure: stop the rollout and recreate that Agent from `/opt/openclaw/docker-compose.yml` (unchanged)                                                                                                               |
+| Upgrade                                 | This rollout                                                                                                                                                                                                                                                                                                                                      |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| per-Agent deploy lock                   | one Agent at a time. The owner pauses dashboard actions on Agents (Upgrade, deploy, Secrets save, verify-model) on both hosts for the window. A missed pause can only revert an Agent, which the step 6 sweep catches.                                                                                                                            |
+| health check: WS connect to the gateway | the gateway's own authenticated WS RPC (`node dist/index.js health` in the container exits 0; Rev 3, F5); HTTP 200 on the gateway port; still up 60 s later with `RestartCount` unchanged and not `OOMKilled`; VmHWM < 600 MB; no `heap out of memory` or error lines; plugin, tool and channel lines equal to the saved pre-change baseline (I2) |
+| on failure: revert docker.env, recreate | on failure: stop the rollout and recreate that Agent from `/opt/openclaw/docker-compose.yml` (unchanged)                                                                                                                                                                                                                                          |
 
 1. **Implementation PR**: the compose diff, the boot gate, and their tests. It is Codex-reviewed
    and **not merged** until step 6.
@@ -230,6 +262,12 @@ which is what any dashboard deploy would do.
 dashboard Secrets tab, which is a fenced write and recreates the gateway itself. For the whole
 fleet: revert the PR, `pull --ff-only`, and recreate.
 
+**Early check, day 3 (Rev 3, F4).** For each gateway, look at RSS+swap and its trend. The heap cap
+allows ~1.0–1.1 GB RSS. If a gateway passes ~1.2 GB, or keeps growing at today's ~30 MB/day once its
+heap is near the cap, the growth is not heap. In that case: record it on OB-14 and measure with a
+diagnostic report (`--report-on-signal`, `--report-exclude-env`) on that one Agent. The `mem_limit`
+backstop holds until then.
+
 **Done when**, 7 days after step 5: no `FatalProcessOutOfMemory` anywhere; no unplanned restarts
 (the daily diagnostic's restart-delta already reports them); boot peaks < 600 MB; host swap flat
 (< +0.1 GiB/day/host, against +0.3 today). Record the result on OB-14 and OB-9.
@@ -239,7 +277,8 @@ fleet: revert the PR, `pull --ff-only`, and recreate.
 - **T1** Compose shape, as plain text checks on `docker-compose.yml` (no docker needed). The
   gateway `command` carries `--max-old-space-size=${OPENCLAW_MAX_OLD_SPACE_MB:-768}` as the argument
   right before `dist/index.js`. `JITI_TRY_NATIVE: ${OPENCLAW_JITI_TRY_NATIVE:-1}` is in the gateway
-  env. `openclaw-cli` has neither. Lives beside the existing `scripts/ops/test_*.py`.
+  env. The gateway has `mem_limit: ${OPENCLAW_MEM_LIMIT:-1536m}`. `openclaw-cli` has none of the
+  three. Lives beside the existing `scripts/ops/test_*.py`.
 - **T2** The boot gate fails closed on exactly the case it exists for (Rev 2, F1). On DevAgents it
   passes every current image with `JITI_TRY_NATIVE=1`, and fails the same image with the default
   loader at the compose cap (768). That image boots, but logs ~480 transpiles and peaks above
@@ -247,8 +286,6 @@ fleet: revert the PR, `pull --ff-only`, and recreate.
 
 ## 7. Deliberately not building
 
-- **`mem_limit`.** It is not needed to stop the growth. Add it only if non-heap memory runs away,
-  and keep the explicit heap flag (B3).
 - **`tryNative` in `loader.ts`.** The env var works on all seven builds without a release. Baking it
   into the code is a follow-up for the next image; the env then becomes redundant.
 - **Cap 512.** Decide after 7 days of per-Agent RSS under 768.
@@ -276,3 +313,6 @@ fleet: revert the PR, `pull --ff-only`, and recreate.
    merge, does the step 6 sweep catch every Agent that a missed pause reverted?
 8. Can a dashboard action racing a step 2 recreate on the same Agent leave anything half-applied,
    rather than simply old or new?
+9. With `mem_limit: 1536m` and Docker's default swap allowance, can a legitimate peak be OOM-killed:
+   page cache charged to the cgroup, a large tool output held in a Buffer, MCP children at boot?
+   Is 1536m right for `life` (1.45 GB RSS+swap today, uncapped)?
