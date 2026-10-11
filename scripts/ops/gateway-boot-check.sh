@@ -109,6 +109,8 @@ def inventory(path):
         return {"<unreadable " + path + ">": str(e)}
     return {p["id"]: {k: sorted(p[k]) if isinstance(p.get(k), list) else p.get(k) for k in KEYS} for p in plugins}
 a, b = inventory(sys.argv[1]), inventory(sys.argv[2])
+print(f"{len(b)} plugins, {sum(r.get('status') == 'loaded' for r in b.values())} loaded,"
+      f" {sum(len(r.get('toolNames') or []) for r in b.values())} tools in B")
 for pid in sorted(set(a) | set(b)):
     if a.get(pid) != b.get(pid):
         print(f"{pid}: A={a.get(pid)} B={b.get(pid)}")
@@ -123,12 +125,9 @@ report $? "A health RPC exit=$A_HEALTH"
 report $? "A transpiled $OWN files of the gateway's own graph (dist/, node_modules/); must be 0"
 [[ $A_PEAK =~ ^[0-9]+$ ]] && (( A_PEAK <= PEAK_MAX_MB ))
 report $? "A peak RSS ${A_PEAK} MB; max ${PEAK_MAX_MB}"
-INV=$(python3 -c 'import json, sys
-t = open(sys.argv[1]).read(); t = t[0 if t.startswith("{") else t.index("\n{") + 1:]
-ps = json.JSONDecoder().raw_decode(t)[0]["plugins"]
-print(len(ps), "plugins,", sum(p["status"] == "loaded" for p in ps), "loaded,", sum(len(p["toolNames"]) for p in ps), "tools,", sum(p["hookCount"] for p in ps), "hooks")' "$WORK/B.json" 2>/dev/null || echo "?")
+INV=$(head -1 <<< "$DIFF"); DIFF=$(tail -n +2 <<< "$DIFF")
 [[ -z $DIFF ]]
-report $? "plugin inventory A == B ($INV in B)"
+report $? "plugin inventory A == B ($INV)"
 [[ -n $DIFF ]] && echo "$DIFF" | head -10 | sed 's/^/        /'
-if [[ $fail == 0 ]]; then echo "PASS"; else echo "FAIL (logs were in $WORK, removed on exit)"; fi
+if [[ $fail == 0 ]]; then echo "PASS"; else echo "FAIL"; fi
 exit $fail
