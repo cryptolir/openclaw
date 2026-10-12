@@ -190,11 +190,11 @@ management".
 
 ## 4. Hosts (Hetzner — SSH key `~/.ssh/hetzner-openclaw`)
 
-| Role            | IP                | SSH alias¹           | Specs            | Disk         | Uptime | What runs                                                                                                        |
-| --------------- | ----------------- | -------------------- | ---------------- | ------------ | ------ | ---------------------------------------------------------------------------------------------------------------- |
+| Role            | IP                | SSH alias¹           | Specs            | Disk         | Uptime | What runs                                                                                                                                                                                                                                                                                                    |
+| --------------- | ----------------- | -------------------- | ---------------- | ------------ | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | **Dev / Build** | `204.168.223.245` | — (run scripts here) | 8 vCPU · 30 GiB  | 226 GB (81%) | ~67 d  | Gateway image builds, all git repos, dev Postgres + MySQL. Dev Agents running 2026-10-10: `social-bob` (moved here from US at the 2026-09-28 cutover), `ceyo-drafter`, `feedback`; the other Ceyo Agents are stopped. The 06:00 diagnostic covers it as host `dev` (#142). Coolify present but **inactive**. |
-| **EU Prod**     | `89.167.70.46`    | `1stclaw` (default)  | 4 vCPU · 7.6 GiB | 75 GB (44%)  | ~98 d  | 12 production agent gateways. **RAM ~7.5/7.6 GiB.**                                                              |
-| **US Prod**     | `5.161.84.219`    | `2ndclaw`            | 2 vCPU · 7.6 GiB | 75 GB (61%)  | ~97 d  | 12 agent gateways + **Graphiti memory stack**. **RAM ~7.2/7.6 GiB.**                                             |
+| **EU Prod**     | `89.167.70.46`    | `1stclaw` (default)  | 4 vCPU · 7.6 GiB | 75 GB (44%)  | ~98 d  | 12 production agent gateways. **RAM ~7.5/7.6 GiB.**                                                                                                                                                                                                                                                          |
+| **US Prod**     | `5.161.84.219`    | `2ndclaw`            | 2 vCPU · 7.6 GiB | 75 GB (61%)  | ~97 d  | 12 agent gateways + **Graphiti memory stack**. **RAM ~7.2/7.6 GiB.**                                                                                                                                                                                                                                         |
 
 ¹ Aliases `1stclaw`/`2ndclaw` are defined in the **dev host's** `~/.ssh/config` and used by `deploy.sh`. From a laptop, connect by IP with the key above.
 
@@ -467,10 +467,16 @@ prompts (`AGENTS.md` etc.), or infra/compose (`/opt/...`) — must, **as part of
 >   `/opt/openclaw` on both hosts into `/root/openclaw-cruft-archive/<date>/` (never deletes;
 >   `soul.md` + `status/` untouched — soul.md seeds new agents' SOUL.md at deploy).
 
-1. **RAM pressure:** EU `~7.5/7.6 GiB` near saturation. US relieved by the 2026-06-10 sweep
-   (~3.4 GiB available after stopping the productguy loop + fixing the mcp-bridge crash-loops +
-   full recreate); watch the daily AUTOSCAN — rescale only if `swap_used` stays >1 GiB. The
-   US Graphiti stack still adds load on the smallest box (2 vCPU).
+1. **RAM pressure, structural fix shipped 2026-10-12 (OB-14).** Swap grew ~0.3 GiB/day/host
+   and was drained by hand 3× (06-22, 07-10, 10-02). The root cause was twofold. jiti
+   Babel-transpiled a second copy of the gateway's dependency graph on every fresh boot (~650 MB
+   live heap, 1.3–2.3 GB peak). And Node sized each gateway's heap from host RAM (~2.1 GB × 13–15
+   gateways). The compose file now sets `JITI_TRY_NATIVE=1`, `--max-old-space-size=768` and
+   `mem_limit: 1536m` (plan `docs/experiments/plans/gateway-memory-ob14.md`). Boot peaks are
+   ~430 MB, and both hosts went to 2.0–2.7 GB available with <0.6 GB swap. The 7-day check is due
+   2026-10-19. A boot now takes ~24 s instead of ~40 s and ~400 MB instead of 1.3 GB, so the US
+   "≤ 3 boots at once" rule can be revisited. The US Graphiti stack still adds load on the
+   smallest box (2 vCPU).
 2. **Image drift on US — RESOLVED 2026-06-10:** fleet unified on `gateway:v2026.06.10.1`
    (terminal-error circuit release). Superseded text: `designer`, `agentav`, `gems` run a **stale local image
    `openclaw:v2026.05.05.1`** (not from the registry); `raingame` `v2026.05.24.2`; `life`
