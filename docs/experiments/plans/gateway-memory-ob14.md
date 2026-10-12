@@ -1,6 +1,6 @@
 # Gateway memory — native plugin loading + a heap cap (OB-14)
 
-> **Status:** Rev 5 — FINAL. Folds Codex rounds 1–4 (F1–F9). Owner decision 2026-10-11 at the round-4 bound: fold the last two and move to implementation; the impl PR gets its own adversarial review · **Created:** 2026-10-11 · **Owner go-ahead:** 2026-10-11
+> **Status:** DELIVERED 2026-10-12: all 28 running gateways, impl #183 (`5599304`); 7-day check due 2026-10-19 (§9). Plan: Rev 5 — FINAL. Folds Codex rounds 1–4 (F1–F9). Owner decision 2026-10-11 at the round-4 bound: fold the last two and move to implementation; the impl PR gets its own adversarial review · **Created:** 2026-10-11 · **Owner go-ahead:** 2026-10-11
 >
 > **Bug list:** OB-14 (per-gateway caps), OB-9 (host RAM over-commit) in `openclaw-dashboard`
 > `docs/ops/bug_list.md`. Replaces the reverted B3 of `channel-error-hardening.md`.
@@ -394,3 +394,76 @@ backstop holds until then.
    Is 1536m right for `life` (1.45 GB RSS+swap today, uncapped)?
 10. Is a plugin set that is identical at boot enough evidence of I2, or can a plugin load in both
     modes and still register different tools or hooks?
+
+## 9. Rollout record (2026-10-11 → 2026-10-12)
+
+**Result.** All 28 running gateways (EU 15, US 13) run the change. The stopped `researcher` and
+`social-bob` were left alone and pick it up at their next deploy. A post-merge sweep found 0
+stragglers: every running gateway has the flag, `JITI_TRY_NATIVE=1` and `HostConfig.Memory`
+1610612736, with no restart and no OOM kill.
+
+- **Hosts, before → after.** EU went from 341 MB available / 4096 MB swap to 2041 MB / 374 MB.
+  US went from 320 MB / 4079 MB to 2688 MB / 534 MB.
+- **Boot peak (VmHWM) per Agent.** The average was 432 MB; all but one were 399–487 MB. The
+  exception is `projectmanager` at 662 MB (see deviation 2). Before the change, gateways
+  recreated fresh peaked at 1274–1427 MB.
+- **Steady state.** Over the 24 h cohort soak, `testingbot`, `cashtronics`, `support` and
+  `vcode1bot` stayed flat at ~320–380 MB RSS+swap each. Before the change `cashtronics` grew
+  from ~330 to 620 MB in 9 days.
+
+**Stages.**
+
+1. Canary `testingbot`: 1 h, 7 checks, all clean; public-chat `smoke-ok`.
+2. Cohort `cashtronics`, `support` and `vcode1bot`: 24 h, 13 chunks of 12 checks, all clean, no
+   revert.
+3. Fleet roll, one Agent at a time per host.
+4. `life`, `projectmanager` and `calendar-demo-pkpiii`, each on its own.
+5. Merge, `pull --ff-only` on both hosts, sweep.
+
+**Deviations from the plan, with reasons.**
+
+1. **Per-Agent health (I1/F5).** `node dist/index.js health` inside a prod container fails on
+   **every** Agent, changed or not, with `unauthorized: device token mismatch` (a stale stored
+   device identity; untouched `sandbox-probe-test` shows it too). The gate used the dashboard's own
+   online check instead, run inside the container. That is a token WS `connect` with
+   `lib/gateway-client.ts` `BACKEND_PARAMS` and the token from `openclaw.json`
+   `gateway.auth.token`. Note that the container's `OPENCLAW_GATEWAY_TOKEN` env does not match
+   it. A wrong token is refused. The release gate keeps the CLI, which works on fresh state.
+2. **`projectmanager` boot peak 662 MB, above the per-Agent 600.** It enables the bundled
+   `telegram` plugin (`plugins.entries.telegram`). Under native loading that extension still
+   falls back to transpile, together with ~250 gateway `src/` files it imports, so its jiti cache
+   held 252 files against 1–3 on every other Agent. That is still half its old 1388 MB, the heap
+   stays far under the 768 cap, and the release gate measured the same path at full plugin
+   coverage (658 MB for `v2026.9.7.2`, under its 800). Accepted. The 600 was a rollout heuristic
+   from bare canaries, not a limit.
+3. **I2 compared as sorted sets.** On `gems` the boot lines matched exactly, but in a different
+   order: a native boot logs `listening` before its MCP servers finish registering. Order is not
+   a property of the plugin set.
+4. **`life` I2/I3.** The pre-change container had logged its plugin lines twice: `[gateway]
+[plugins] …` at boot, then a bare `[plugins] …` copy from a later per-workspace plugin load.
+   The new container shows the boot copy only. Both scoping hooks register exactly as before
+   (`life-access-scope` app-user file boundary; `life-memory-scope` pins `__group_id`), graphiti
+   is ready with its 4 tools, and the proxy child runs. The "first real memory call succeeds"
+   check could not be observed: tool calls are not logged at this level, and `graphiti-mcp`
+   logged only `/health` for 72 h. The proxy fails closed, so a scoping loss would show as failed
+   memory calls, not leaked ones.
+5. **Staging dir.** `/opt/openclaw-ob14` was not deleted. It became a **symlink to
+   `/opt/openclaw`** on both hosts, because every container's
+   `com.docker.compose.project.working_dir` label points at it and the daily diagnostic renders
+   Compose from that label's dir (`agents_server_diagnostic.sh` env-source block). Deleting it
+   would have failed that check for all 28 Agents. Remove the link once each Agent has been
+   redeployed from `/opt/openclaw`.
+
+**Boot gate.** It is installed in `/opt/openclaw-ops/scripts/build-and-push.sh` between build and
+push (`.bak.pre-ob14-gate` kept). That file is host-only, not in git; the gap is on the bug list.
+Its own-graph check counts `dist/` and `node_modules/` transpiles only. A plugin that falls back
+and drags `src/` along (deviation 2) is covered by the peak limit, not by that count.
+
+**Still open.**
+
+- The 7-day "Done when" check, due 2026-10-19: no `FatalProcessOutOfMemory`, no unplanned
+  restarts, host swap flat.
+- The day-3 early check, due 2026-10-15.
+- Cap 512: decide after the 7 days.
+- Bake `tryNative` into `loader.ts`, and fix the bundled extensions' `./x.js`→`x.ts` imports so
+  they load natively too. Both at the next image release.

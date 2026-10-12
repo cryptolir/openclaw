@@ -7,6 +7,22 @@
 
 ## Active Branches / PRs
 
+> **2026-10-12: OB-14 gateway memory shipped to all 28 running gateways** (plan
+> `docs/experiments/plans/gateway-memory-ob14.md`, record in its §9; impl #183 `5599304`).
+> Compose now gives the gateway `JITI_TRY_NATIVE=1` (native plugin loading), a 768 MB heap
+> flag and a 1536m `mem_limit`. Boot peaks fell from ~1.3–1.4 GB to ~430 MB, and the hosts
+> went from ~330 MB available / ~4.1 GB swap to 2.0–2.7 GB / ~0.4–0.5 GB.
+> **Hosts, by hand**:
+>
+> - `/opt/openclaw-ops/scripts/build-and-push.sh` on DevAgents now runs
+>   `scripts/ops/gateway-boot-check.sh` before `docker push` (`.bak.pre-ob14-gate`). The script
+>   itself is still not in git.
+> - `/opt/openclaw-ob14` on EU and US is a **symlink to `/opt/openclaw`**. Container labels point
+>   at it until each Agent's next deploy, so do not delete it before then.
+>
+> Per-Agent escape hatches are whole rows only (plan §5 Rollback). The old loader cannot boot
+> under the 768 cap alone.
+
 > **⚠️ 2026-09-07 — `gateway:v2026.9.7.1` was overwritten and has been restored.**
 > A session building the Codex forward-compat fix (#156) picked the tag `v2026.9.7.1`
 > by hand without checking the day's sequence, and `build-and-push.sh` pushed it over
@@ -31,10 +47,10 @@
 > One branch = one owner. This table lists **claimed** branches only — for every
 > open PR run `gh pr list --repo cryptolir/openclaw-dashboard`.
 
-| Repo               | Branch                              | PR   | Status                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | Owner  | Files / Areas Touched                                                                                                                                                                                                                                                                                                                   | Validation                                                                                                                                                                                                                                                            | Next Concrete Step                                                                                                                                                                                                                                  | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| ------------------ | ----------------------------------- | ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------ | ---------------------------------------------------------- |
-| openclaw | codex/feat-rain-agent-skills | #19 | open, stale since May — the Rain rewrite shipped separately in #45 | Codex | skills/rain/SKILL.md, STATUS.md | tests + format | owner: close, or say what is still wanted from it | |
-| unknown | chore/staging-deploy-gcp | #1 | open, stale | unknown | GCP deploy workflow | unknown | verify ownership before reuse or cleanup | |
+| Repo     | Branch                       | PR  | Status                                                             | Owner   | Files / Areas Touched           | Validation     | Next Concrete Step                                | Notes |
+| -------- | ---------------------------- | --- | ------------------------------------------------------------------ | ------- | ------------------------------- | -------------- | ------------------------------------------------- | ----- |
+| openclaw | codex/feat-rain-agent-skills | #19 | open, stale since May — the Rain rewrite shipped separately in #45 | Codex   | skills/rain/SKILL.md, STATUS.md | tests + format | owner: close, or say what is still wanted from it |       |
+| unknown  | chore/staging-deploy-gcp     | #1  | open, stale                                                        | unknown | GCP deploy workflow             | unknown        | verify ownership before reuse or cleanup          |       |
 
 ### Open follow-ups from merged PRs (checked 2026-10-10)
 
