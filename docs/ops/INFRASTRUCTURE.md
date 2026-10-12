@@ -55,6 +55,8 @@ model for all `/api/runtime/*` routes · one integration pattern (skill + option
 secret-gated activation) · protocol/chain specifics live in dashboard runtime adapters, not in
 agents.
 
+**Deployment architecture proposal (2026-10-12; not live):** [Agent Deployment Architecture Plan 0.1](https://github.com/cryptolir/openclaw-dashboard/blob/main/docs/plans/agent-deployment-architecture-plan-0.1.md) evaluates cost-aware shared Docker nodes, region-based scheduling, separate browser/memory pools, and optional dedicated Fly.io Machines. It preserves the current dashboard-controlled Compose data plane during initial rollout. No host resize, migration, node registry implementation, or production topology change is authorized by this plan. The actual deployed hosts and agent fleet remain those documented in §4 and §6 below.
+
 ### 2.1 Two planes
 
 | Plane             | Repo / runtime                          | Responsibilities                                                                                                                                                                                                                                                                          |
@@ -134,6 +136,7 @@ management".
 **System & integrations**
 
 - `dash:AGENTGLOB_SYSTEM_V1_ARCHITECTURE.md` — long-form V1 design, rollout phases, task lanes, full identity/Clerk plan. _(summarised in §2)_
+- `dash:docs/plans/agent-deployment-architecture-plan-0.1.md` — 2026-10-12 hosting economics and proposed multi-node deployment architecture, resource admission, provider adapters, backup/migration and rollout. **PROPOSAL ONLY**; no live topology change. _(see §2, §4 and §6)_
 - `dash:PLATFORM_INTEGRATIONS_V1_ARCHITECTURE.md` — integration activation matrix + required dashboard changes. _(see §2.2)_
 - `dash:HANDOVER_CLAUDE_SYSTEM_V1.md` — V1 status & cross-repo handover.
 
