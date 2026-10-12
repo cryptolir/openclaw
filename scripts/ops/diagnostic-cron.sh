@@ -204,7 +204,7 @@ else
   RL_TMP="$(mktemp)"
   RL_CODE="$(curl -sS --max-time 120 -o "$RL_TMP" -w '%{http_code}' \
     -H "Authorization: Bearer $CRON_SECRET" "$DASH_URL/api/cron/release-log" 2>/dev/null || echo 000)"
-  if [[ "$RL_CODE" == "200" && -s "$RL_TMP" ]] && head -1 "$RL_TMP" | grep -q '^# Deploy log'; then
+  if [[ "$RL_CODE" == "200" && -s "$RL_TMP" ]] && grep -q '^# Deploy log' <<< "$(head -1 "$RL_TMP")"; then
     # Shrink guard: the log is append-only, so a render with FEWER entries than
     # the committed file means the ledger is under-populated (e.g. the cron was
     # wired before GH_RELEASE_READ_TOKEN, so the dashboard stream fails closed

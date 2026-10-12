@@ -218,7 +218,7 @@ REMOTE_EOF
 )
 
 # ── Parse result ─────────────────────────────────────────────────────────────
-if echo "$RESULT" | grep -q "^ALREADY_EXISTS:"; then
+if grep -q "^ALREADY_EXISTS:" <<< "$RESULT"; then
   PORT=$(echo "$RESULT" | grep "^ALREADY_EXISTS:" | cut -d: -f2)
   echo ""
   echo "Agent '${AGENT_ID}' already exists on ${SERVER} (gateway port ${PORT})."
@@ -226,7 +226,7 @@ if echo "$RESULT" | grep -q "^ALREADY_EXISTS:"; then
   exit 0
 fi
 
-if echo "$RESULT" | grep -q "^OK:"; then
+if grep -q "^OK:" <<< "$RESULT"; then
   PORTS=$(echo "$RESULT" | grep "^OK:" | head -1)
   GW_PORT=$(echo "$PORTS" | cut -d: -f2)
   BR_PORT=$(echo "$PORTS" | cut -d: -f3)
@@ -242,7 +242,7 @@ if echo "$RESULT" | grep -q "^OK:"; then
   exit 0
 fi
 
-if echo "$RESULT" | grep -q "^FAIL:"; then
+if grep -q "^FAIL:" <<< "$RESULT"; then
   echo ""
   echo "ERROR: Container failed health check. Logs:" >&2
   echo "$RESULT" >&2

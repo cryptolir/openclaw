@@ -162,7 +162,9 @@ if [ ! -f /etc/docker/daemon.json ] || ! grep -q max-size /etc/docker/daemon.jso
   em "ISSUE|P2|$H|-|No docker log rotation|/etc/docker/daemon.json lacks max-size; container logs grow unbounded (disk-fill risk on a crash loop)."
 fi
 
-if dmesg -T 2>/dev/null | grep -qiE 'Out of memory: Killed process'; then
+# No `cmd | grep -q` here: under pipefail the writer's SIGPIPE turns a match into a miss
+# (OB-57). Every check below feeds grep -q a here-string instead.
+if grep -qiE 'Out of memory: Killed process' <<< "$(dmesg -T 2>/dev/null)"; then
   em "ISSUE|P1|$H|-|OOM kill in kernel log|$(dmesg -T 2>/dev/null | grep -iE 'Out of memory: Killed process' | tail -1 | cut -c1-160)"
 fi
 
@@ -208,12 +210,12 @@ for cname in $(docker ps -a --format '{{.Names}}' | grep -- '-openclaw-gateway-1
   esac
   # gateway actually serving? (catches internal boot-loops: container 'Up' but
   # the gateway never reaches 'listening', e.g. the mcp-bridge EPIPE loop)
-  if [ -n "$gwport" ] && ! ss -ltn 2>/dev/null | grep -q ":${gwport} "; then
+  if [ -n "$gwport" ] && ! grep -q ":${gwport} " <<< "$(ss -ltn 2>/dev/null)"; then
     em "ISSUE|P0|$H|$agent|Gateway port not listening|Port ${gwport} not bound; gateway not serving (possible boot loop)."
   fi
 
   logs=$(docker logs "$cname" --since "$LOG_SINCE" 2>&1)
-  printf '%s' "$logs" | grep -qiE 'Uncaught exception|EPIPE' \
+  grep -qiE 'Uncaught exception|EPIPE' <<< "$logs\" \
     && em "ISSUE|P1|$H|$agent|Gateway uncaught exception|EPIPE/Uncaught in last ${LOG_SINCE} — likely a plugin/MCP server crash (see mcp-bridge)."
   # `aborted due to timeout` was REMOVED from this pattern 2026-08-10. It matched
   # the venice model-DISCOVERY timeout, which the P2 rule below already reports
@@ -225,7 +227,7 @@ for cname in $(docker ps -a --format '{{.Names}}' | grep -- '-openclaw-gateway-1
   # after it). Same shape as the 401 rule above — two different failures sharing
   # one rule, the remedy wrong for one of them. This rule now keeps only the
   # signals that mean a real request went unanswered.
-  printf '%s' "$logs" | grep -qiE 'typing TTL reached|no reply' \
+  grep -qiE 'typing TTL reached|no reply' <<< "$logs\" \
     && em "ISSUE|P1|$H|$agent|Model not responding|typing-TTL / no-reply in logs — a request went unanswered; primary model may be hanging or invalid."
   # Two DIFFERENT failures used to share this rule, and the shared remedy was
   # wrong for one of them. Measured on us/projectmanager (2026-08-09): the only
@@ -234,15 +236,15 @@ for cname in $(docker ps -a --format '{{.Names}}' | grep -- '-openclaw-gateway-1
   # which is involved. `Unauthorized` here is the GATEWAY's own auth handshake,
   # not a provider 401. Genuine revoked-credential cases are already caught,
   # correctly, by the `terminal channel error` rule below.
-  printf '%s' "$logs" | grep -qiE 'setMyCommands.*401|: 401' \
+  grep -qiE 'setMyCommands.*401|: 401' <<< "$logs\" \
     && em "ISSUE|P1|$H|$agent|Provider auth failure (401)|A 401 from an upstream API in the last ${LOG_SINCE} — bot token or API key likely invalid."
-  printf '%s' "$logs" | grep -q 'reason=token_mismatch' \
+  grep -q 'reason=token_mismatch' <<< "$logs\" \
     && em "ISSUE|P1|$H|$agent|Gateway token mismatch|The dashboard and this container disagree on the gateway token, so calls are refused before reaching the model — chat fails with a generic error. NOT a bot token or API key. Restart the container (it re-reads its config on boot); if it recurs, redeploy."
-  printf '%s' "$logs" | grep -qiE 'Discovery attempt failed: TimeoutError' \
+  grep -qiE 'Discovery attempt failed: TimeoutError' <<< "$logs\" \
     && em "ISSUE|P2|$H|$agent|Model-provider discovery timeout|A provider (e.g. venice) discovery is timing out; fallback may be impaired."
-  printf '%s' "$logs" | grep -qiE 'No servers configured' \
+  grep -qiE 'No servers configured' <<< "$logs\" \
     && em "ISSUE|P3|$H|$agent|mcp-bridge no servers|mcp-bridge loaded with no servers (log noise; harmless)."
-  printf '%s' "$logs" | grep -q 'terminal channel error' \
+  grep -q 'terminal channel error' <<< "$logs\" \
     && em "ISSUE|P1|$H|$agent|Channel paused on terminal error|Gateway circuit paused a channel (invalid credential — e.g. revoked bot token). Fix the credential; it re-probes hourly."
 
   # Tight-loop detector: log bytes written in the last hour (file size is
@@ -270,7 +272,7 @@ for cname in $(docker ps -a --format '{{.Names}}' | grep -- '-openclaw-gateway-1
       _missing=""
       for _k in $(grep -oE "^[A-Za-z_][A-Za-z0-9_]*=" "$envf" 2>/dev/null | tr -d "=" | sort -u); do
         case " $ENV_FORWARD_IGNORE " in *" $_k "*) continue ;; esac
-        printf "%s\n" "$_cenv" | grep -qx "$_k" || _missing="${_missing}${_k} "
+        grep -qx "$_k" <<< "$_cenv" || _missing="${_missing}${_k} "
       done
       if [ -n "$_missing" ]; then
         em "ISSUE|P2|$H|$agent|Key in docker.env never reaches the container|Saved for this agent but missing from its container env: ${_missing}- so any skill needing it fails as though unconfigured, while the dashboard shows it set. Cause is nearly always the compose allowlist: add the key to BOTH service blocks in /opt/openclaw/docker-compose.yml (with a :- default so agents without it are unaffected), then recreate the agent with: cd /opt/openclaw && env -i PATH=\"\$PATH\" HOME=\"\$HOME\" docker compose -p ${agent} --env-file ${envf} up -d --force-recreate openclaw-gateway (a plain up -d is a no-op when the config hash matches; env -i because Compose prefers the calling shell exported variables over --env-file). If the key IS already in the repo compose, then THIS HOST has drifted - reconcile /opt/openclaw to main."
@@ -386,13 +388,13 @@ else
   gkeys=$(grep -oE '^[A-Za-z_][A-Za-z0-9_]*=' "$GLOBAL_ENV" 2>/dev/null | tr -d '=' | sort -u)
   gmissing=""
   for k in $CORE_APIS; do
-    printf '%s\n' "$gkeys" | grep -qx "$k" || gmissing="${gmissing} ${k}"
+    grep -qx "$k" <<< "$gkeys" || gmissing="${gmissing} ${k}"
   done
   [ -n "$gmissing" ] && em "ISSUE|P1|$H|host|Global Host is missing Core APIs|Absent:${gmissing} — every Agent seeded on this host from now on starts without them. The Core APIs are defined in docs/TERMINOLOGY.md in the dashboard repo."
   gextra=""
   for k in $gkeys; do
     case "$k" in OPENCLAW_*) continue ;; esac
-    printf '%s\n' "$CORE_APIS $CORE_APIS_OPTIONAL" | tr ' ' '\n' | grep -qx "$k" || gextra="${gextra} ${k}"
+    grep -qx "$k" <<< "$(tr ' ' '\n' <<< "$CORE_APIS $CORE_APIS_OPTIONAL")" || gextra="${gextra} ${k}"
   done
   [ -n "$gextra" ] && em "ISSUE|P1|$H|host|Global Host carries non-Core-API secrets|Extra keys:${gextra} — the Global Host must hold ONLY the Core APIs plus this server own OPENCLAW_* settings (docs/TERMINOLOGY.md, Global Host). The dashboard copies only the Core API lines into a new Agent, so an extra key here has no reader: a per-Agent or per-person credential belongs in that Agent own docker.env instead."
 fi
