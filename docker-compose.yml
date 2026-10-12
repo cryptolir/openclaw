@@ -98,6 +98,13 @@ services:
       DEBOUNCE_API_KEY: ${DEBOUNCE_API_KEY:-}
       APIFY_TOKEN: ${APIFY_TOKEN:-}
       LEMLIST_API_KEY: ${LEMLIST_API_KEY:-}
+      # OB-14 (docs/experiments/plans/gateway-memory-ob14.md): load plugins with Node's own loader.
+      # Without it jiti Babel-transpiles a second copy of the gateway's dependency graph on every
+      # fresh boot (482 files, ~650 MB live heap, 1.3–2.3 GB peak RSS). Escape hatch per Agent:
+      # OPENCLAW_JITI_TRY_NATIVE=0 restores the old loader. Set it ONLY together with the tested
+      # native-off heap/memory values in the plan's Rollback table: the old loader cannot boot
+      # under the default 768 heap cap.
+      JITI_TRY_NATIVE: ${OPENCLAW_JITI_TRY_NATIVE:-1}
     volumes:
       - ${OPENCLAW_CONFIG_DIR}:/home/node/.openclaw
       - ${OPENCLAW_WORKSPACE_DIR}:/home/node/.openclaw/workspace
@@ -117,15 +124,18 @@ services:
       - "${OPENCLAW_BRIDGE_PORT:-18790}:18790"
     init: true
     restart: unless-stopped
-    # NOTE (channel-error-hardening B3, REVERTED 2026-06-10): mem_limit: 1g +
-    # cpus: 1.0 OOM-crash-cycled the entire EU fleet on rollout — V8 aborts
-    # (FatalProcessOutOfMemory) during gateway boot under a 1 GiB cgroup cap
-    # even though steady-state RSS is only 248–440 MiB. Do not re-add a memory
-    # cap without pairing it with NODE_OPTIONS=--max-old-space-size sized
-    # below the cap, and canary on testingbot (EU) first.
+    # OB-14: a backstop for what the heap flag below does not bound (native memory, Buffers, MCP
+    # children). Safe ONLY together with the explicit heap flag: without it Node derives the heap
+    # from this limit (B3, 2026-06-10). Keep OPENCLAW_MEM_LIMIT >= OPENCLAW_MAX_OLD_SPACE_MB + 768m.
+    mem_limit: ${OPENCLAW_MEM_LIMIT:-1536m}
+    # OB-14: explicit heap cap. Without it Node sizes the heap from the RAM it sees (~2.1 GB per
+    # gateway here), and under a cgroup limit from that limit, which is what crash-looped the EU
+    # fleet in B3 (2026-06-10). Depends on JITI_TRY_NATIVE above: the transpiling loader needs
+    # ~700 MB of heap to boot. Per-Agent override: OPENCLAW_MAX_OLD_SPACE_MB in its docker.env.
     command:
       [
         "node",
+        "--max-old-space-size=${OPENCLAW_MAX_OLD_SPACE_MB:-768}",
         "dist/index.js",
         "gateway",
         "--bind",
