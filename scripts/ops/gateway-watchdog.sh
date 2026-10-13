@@ -32,9 +32,9 @@ record() { # action container exitCode reason
 
 terminal_reason() { # prints reason and returns 0 if last log lines look terminal
   local logs="$1"
-  if printf '%s' "$logs" | grep -q "401: Unauthorized"; then echo "telegram-401"; return 0; fi
-  if printf '%s' "$logs" | grep -qE "giving up after [0-9]+ restart attempts"; then echo "channel-gave-up"; return 0; fi
-  if printf '%s' "$logs" | grep -q "EPIPE"; then echo "epipe-crash"; return 0; fi
+  if grep -q "401: Unauthorized" <<< "$logs"; then echo "telegram-401"; return 0; fi
+  if grep -qE "giving up after [0-9]+ restart attempts" <<< "$logs"; then echo "channel-gave-up"; return 0; fi
+  if grep -q "EPIPE" <<< "$logs"; then echo "epipe-crash"; return 0; fi
   return 1
 }
 

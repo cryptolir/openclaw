@@ -77,9 +77,12 @@ if git -C "$DASH_REPO" rev-parse --git-dir >/dev/null 2>&1; then
   # beats a daily false-positive that trains you to ignore the section.
   while IFS= read -r host; do
     [ -n "$host" ] || continue
-    printf '%s' "$host" | grep -qE "$ALLOW" && continue
+    grep -qE "$ALLOW" <<< "$host" && continue
     base=$(printf '%s' "$host" | awk -F. 'NF>=2{print $(NF-1)"."$NF} NF<2{print}')
-    printf '%s' "$DOC" | grep -qF "$base" && continue
+    # ponytail: no `printf | grep -q` under pipefail — grep -q quits at the first match, the
+    # writer gets SIGPIPE (141) and the pipeline reads as "not found". It flagged a random
+    # handful of documented hosts every day (OB-57). A here-string has no writer process.
+    grep -qF "$base" <<< "$DOC" && continue
     row "NEW: $host" "N" "?" "add row to DEPENDENCIES.md (external host)"
     iss "ISSUE|P3|deps|-|Undocumented dependency candidate|host ${host} in lib/app — suggested fix: add a row to docs/DEPENDENCIES.md"
     new_count=$((new_count+1))
@@ -93,11 +96,11 @@ EOF
   # a grep vs prose doc is crude, so we only nudge on names that look like deps.
   while IFS= read -r ev; do
     [ -n "$ev" ] || continue
-    printf '%s' "$DOC" | grep -qF "$ev" && continue
+    grep -qF "$ev" <<< "$DOC" && continue
     # Also match the stem (drop the service suffix) so the doc's grouped form
     # `OPENCLAW_GATEWAY_HOST / _PORT / _TOKEN` covers OPENCLAW_GATEWAY_TOKEN.
     stem=$(printf '%s' "$ev" | sed -E 's/_(URL|KEY|HOST|SECRET|TOKEN|BUCKET)$//')
-    printf '%s' "$DOC" | grep -qF "$stem" && continue
+    grep -qF "$stem" <<< "$DOC" && continue
     row "NEW: $ev" "N" "?" "add row to DEPENDENCIES.md (infra env var)"
     iss "ISSUE|P3|deps|-|Undocumented env var candidate|${ev} in lib/app — suggested fix: add a row to docs/DEPENDENCIES.md"
     new_count=$((new_count+1))
@@ -173,7 +176,7 @@ try: print(find(json.load(open('$A/openclaw.json'))) or '')
 except Exception: pass" 2>/dev/null)
 [ -n "$TG" ] || TG=$(grep -oE '^[A-Z_]*TELEGRAM[A-Z_]*TOKEN=.*' "$A/docker.env" 2>/dev/null | head -1 | cut -d= -f2-)
 if [ -n "$TG" ]; then
-  curl -sf --max-time "$TIMEOUT_S" "https://api.telegram.org/bot${TG}/getMe" 2>/dev/null | grep -q '"ok":true' \
+  grep -q '"ok":true' <<< "$(curl -sf --max-time "$TIMEOUT_S" "https://api.telegram.org/bot${TG}/getMe" 2>/dev/null)" \
     && echo "RESULT|telegram|OK|getMe ok (donor ${KEY_AGENT})" \
     || echo "RESULT|telegram|FAIL|getMe rejected — token invalid or API down"
 else
