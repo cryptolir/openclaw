@@ -125,7 +125,7 @@ fi
 #     10 days. Exit 3 = still too little room after pruning → SUBJECT.
 PRUNE_REPORT=""
 DISK_ALERTS=""
-for H in 89.167.70.46 5.161.84.219; do
+for H in 89.167.70.46 5.161.84.219 2.31.40.68; do
   echo "── gateway-image prune: root@$H ──"
   out="$(ssh -i "$SSH_KEY" -o ConnectTimeout=15 -o BatchMode=yes "root@$H" 'bash -s -- 3' \
     < "$REPO/scripts/ops/prune-gateway-images.sh" 2>&1)"
@@ -150,7 +150,7 @@ echo "$REPORT"
 #     stale patterns (*.bak, .archive-*) older than 7 days are touched;
 #     soul.md and status/ are deliberately left alone (soul.md seeds new
 #     agents' SOUL.md during provisioning).
-for H in 89.167.70.46 5.161.84.219; do
+for H in 89.167.70.46 5.161.84.219 2.31.40.68; do
   ssh -i "$SSH_KEY" -o ConnectTimeout=15 -o BatchMode=yes "root@$H" '
     cd /opt/openclaw 2>/dev/null || exit 0
     ARCHIVE="/root/openclaw-cruft-archive/$(date +%F)"

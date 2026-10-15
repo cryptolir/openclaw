@@ -15,7 +15,7 @@ bug_list.md. The human decision happens there: update, roll or promote, or hold 
 Read-only everywhere: `docker ps`, `docker exec <version command>`, `apt-get -s` (a simulation), and
 one `docker run --rm --network none` of the stable image on the dev server.
 
-    versions-check.py --doc DEPENDENCIES.md --report R --issues I [--latest-cache C] [--hosts eu,us,dev] [--no-latest]
+    versions-check.py --doc DEPENDENCIES.md --report R --issues I [--latest-cache C] [--hosts eu,us,dev,team1] [--no-latest]
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ import sys
 import urllib.request
 
 # ponytail: same map as agents_server_diagnostic.sh host_ip(); one more host means one more line in both.
-HOSTS = {"eu": "89.167.70.46", "us": "5.161.84.219", "dev": "204.168.223.245"}
+HOSTS = {"eu": "89.167.70.46", "us": "5.161.84.219", "dev": "204.168.223.245", "team1": "2.31.40.68"}
 REGISTRY = "europe-west1-docker.pkg.dev/gold-verve-459312-e7/openclaw-gateway/gateway"
 SSH_KEY = os.environ.get("SSH_KEY", os.path.expanduser("~/.ssh/hetzner-openclaw"))
 
@@ -621,7 +621,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--doc", required=True, help="docs/DEPENDENCIES.md, or - for stdin")
     ap.add_argument("--report", required=True)
     ap.add_argument("--issues", required=True)
-    ap.add_argument("--hosts", default="eu,us,dev")
+    ap.add_argument("--hosts", default="eu,us,dev,team1")
     ap.add_argument("--no-latest", action="store_true", help="skip the upstream lookups")
     ap.add_argument("--latest-cache", default="", help="JSON file keeping the weekly upstream answers")
     ap.add_argument("--today", default="", help="YYYY-MM-DD, for holds (default: today, UTC)")
