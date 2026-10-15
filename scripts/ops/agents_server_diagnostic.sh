@@ -37,7 +37,7 @@
 #
 # Usage:
 #   ./agents_server_diagnostic.sh [options] [host ...]
-#     host            one or more of: eu  us  dev  all  (default: all)
+#     host            one or more of: eu  us  dev  team1  all  (default: all)
 #
 #   --bug-list PATH   path to bug_list.md   (default: $DASH_REPO/docs/ops/bug_list.md)
 #   --no-write        print the report only; do not touch bug_list.md
@@ -51,12 +51,13 @@ set -uo pipefail
 
 # ── Fleet definition (functions, not assoc arrays → bash 3.2 / macOS safe) ────
 SSH_KEY="${SSH_KEY:-$HOME/.ssh/hetzner-openclaw}"
-host_ip()    { case "$1" in eu) echo "89.167.70.46";; us) echo "5.161.84.219";; dev) echo "204.168.223.245";; *) echo "";; esac; }
-host_label() { case "$1" in eu) echo "1stClaw/EU";; us) echo "2ndClaw/US";; dev) echo "DevAgents/Dev";; *) echo "$1";; esac; }
+host_ip()    { case "$1" in eu) echo "89.167.70.46";; us) echo "5.161.84.219";; dev) echo "204.168.223.245";; team1) echo "2.31.40.68";; *) echo "";; esac; }
+host_label() { case "$1" in eu) echo "1stClaw/EU";; us) echo "2ndClaw/US";; dev) echo "DevAgents/Dev";; team1) echo "team-1/Team";; *) echo "$1";; esac; }
 # dev = DevAgents, a platform-only deploy target since dashboard #480 (2026-09-02).
 # The probe runs on DevAgents itself for that host — over ssh like the others,
 # so one code path serves all three. Same SSH_KEY; it is authorized there.
-ALL_HOSTS="eu us dev"
+# team1 = the first Deploy a Team server (Hetzner CPX32, Germany), added 2026-10-15.
+ALL_HOSTS="eu us dev team1"
 
 # ── Thresholds (tune here) ───────────────────────────────────────────────────
 # Disk is judged in GB FREE, not % used: what breaks is the next gateway image
@@ -111,7 +112,7 @@ while [[ $# -gt 0 ]]; do
     --no-write) WRITE=0; shift ;;
     --since)    LOG_SINCE="$2"; shift 2 ;;
     -h|--help)  sed -n '2,49p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
-    eu|us|dev)  SELECT="$SELECT $1"; shift ;;
+    eu|us|dev|team1)  SELECT="$SELECT $1"; shift ;;
     all)        SELECT="$ALL_HOSTS"; shift ;;
     *) echo "ERROR: unknown arg '$1' (try --help)" >&2; exit 2 ;;
   esac
