@@ -28,21 +28,16 @@ A, B, C = "a" * 16, "b" * 16, "c" * 16
 K1, K2 = "1" * 16, "2" * 16
 
 
-def scoped(a):
-    """Credentials are per (agent, scope); a bare agent name means its default agent's."""
-    return a if isinstance(a, tuple) else (a, "defaults")
-
-
 def survey(host="eu", agents=None, keys=None, global_keys=(), accts=None, lists=None, unverified=None,
-           scope_errors=()):
+           multi=()):
     """A host survey as parse_probe() would build it; READ counts follow the lists."""
     lists = lists or {}
     return {"host": host, "agents": agents or {}, "global_keys": set(global_keys),
-            "accts": {scoped(a): set(v) for a, v in (accts or {}).items()},
-            "keys": {scoped(a): ({v} if isinstance(v, str) else set(v)) for a, v in (keys or {}).items()},
+            "accts": {a: set(v) for a, v in (accts or {}).items()},
+            "keys": {a: ({v} if isinstance(v, str) else set(v)) for a, v in (keys or {}).items()},
             "lists": {k: [{"id": i} for i in v] for k, v in lists.items()},
             "read": {k: len(v) for k, v in lists.items()}, "unverified": unverified or {},
-            "errors": [], "host_errors": [], "scope_errors": set(scope_errors), "dropped": 0}
+            "errors": [], "host_errors": [], "multi": set(multi), "dropped": 0}
 
 
 PUBLIC_OK = {"venice": (["kimi-k3", "claude-sonnet-5"], ""), "openrouter": (["openrouter/free"], "")}
@@ -140,25 +135,26 @@ class Findings(unittest.TestCase):
         issues, _, _, _ = mc.analyse([s], PUBLIC_OK, {}, [])
         self.assertEqual([i.agent for i in pri(issues, "P1")], ["one"])
 
-    def test_191_r2_F1_an_agents_list_entry_is_judged_by_its_own_credentials(self):
-        s = survey(agents={"bot": [("agents.defaults.model.primary", "openai/gpt-4o"),
-                                   ("agents.list[0].model", "openai/gpt-4o")]},
-                   keys={"bot": K1, ("bot", "list[0]"): K2},
-                   lists={("openai", K1): ["gpt-4o"], ("openai", K2): ["o3"]})
+    def test_191_r3_a_multi_agent_config_is_never_judged(self):
+        s = survey(agents={"multi": [("agents.defaults.model.primary", "openai-codex/gpt-5.5"),
+                                     ("agents.list[0].model", "openai/gpt-4o"),
+                                     ("agents.list[1].model", "venice/gone")]},
+                   accts={"multi": {A}}, keys={"multi": K1},
+                   lists={("openai-codex", A): ["gpt-6-luna"], ("openai", K1): ["o3"]}, multi=["multi"])
         issues, _, _, _ = mc.analyse([s], PUBLIC_OK, {}, [])
-        p1 = pri(issues, "P1")
-        self.assertEqual(len(p1), 1)
-        # one P1, not two: the defaults ref (key K1) is fine; the list[0] ref ran on its own key K2
-        self.assertEqual(mc.scope_of("agents.list[3].model.fallbacks[0]"), "list[3]")
-        self.assertEqual(mc.scope_of("agents.defaults.subagents.model"), "defaults")
+        # its OpenAI/ChatGPT refs are not judged; a public-list ref (Venice) still is
+        self.assertEqual([(i.pri, i.title) for i in issues if i.agent == "multi"],
+                         [("P1", "Model no longer offered"), ("P3", "OpenAI/ChatGPT models not checked")])
+        self.assertIn("venice/gone", pri(issues, "P1")[0].detail)  # agents.list[1].model is that entry's primary
 
-    def test_191_r2_F1_an_unreadable_credentials_folder_is_P3_never_dead(self):
-        s = survey(agents={"bot": [("agents.list[0].model", "openai-codex/gpt-5.5")]},
-                   accts={"bot": {A}}, lists={("openai-codex", A): ["gpt-6-luna"]},
-                   scope_errors=[("bot", "list[0]")])
-        issues, _, _, _ = mc.analyse([s], PUBLIC_OK, {}, [])
-        self.assertFalse(pri(issues, "P1") + pri(issues, "P2"))
-        self.assertTrue(any("agentDir" in i.detail for i in pri(issues, "P3")))
+    def test_191_r3_F3_a_later_host_success_replaces_an_earlier_failure(self):
+        eu = survey("eu", accts={"x": {A}}, unverified={("openai-codex", A): "401"})
+        us = survey("us", agents={"y": [("agents.defaults.model.primary", "openai-codex/gpt-5.5")]},
+                    accts={"y": {A}}, lists={("openai-codex", A): ["gpt-6-luna"]})
+        issues, lines, push, _ = mc.analyse([eu, us], PUBLIC_OK, {}, [])
+        self.assertEqual(sorted(push), [A])
+        self.assertEqual([i.agent for i in pri(issues, "P1")], ["y"])
+        self.assertFalse(any("401" in l for l in lines))
 
     def test_r3_F1_multi_profile_agent_ok_when_any_account_serves_it(self):
         s = survey(agents={"two": [("agents.defaults.model.primary", "openai-codex/x")]},
@@ -243,14 +239,14 @@ class ProbeOutput(unittest.TestCase):
             "LIST|openai|sk-SECRETKEY12345|gpt-4o",                      # not a fingerprint
             "TOKEN|eyJhbGciOi",                                          # unknown shape
             f"LIST|openai-codex|{A}|gpt-6-luna|GPT-6-Luna|272000",
-            f"KEY|bot|defaults|{K1}|profile",
-            f"KEY|bot|list[x]|{K1}|profile",                             # bad scope
+            f"KEY|bot|{K1}|profile",
+            f"KEY|bot|{K1}|stolen",                                       # unknown source
             f"READ|openai-codex|{A}|1",
         ])
         s = mc.parse_probe("eu", out)
         self.assertEqual(s["agents"], {"bot": [("agents.defaults.model.primary", "openai-codex/gpt-6-luna")]})
         self.assertEqual(s["dropped"], 5)
-        self.assertEqual(s["keys"], {("bot", "defaults"): {K1}})
+        self.assertEqual(s["keys"], {"bot": {K1}})
         self.assertEqual(s["lists"], {("openai-codex", A): [{"id": "gpt-6-luna", "label": "GPT-6-Luna",
                                                                "contextLength": 272000}]})
         self.assertNotIn("SECRET", repr(s))
@@ -370,8 +366,8 @@ class RealProbe(unittest.TestCase):
         out, calls = self.run_probe({"bot": profiles}, {OPENAI_URL: {"data": [{"id": "gpt-4o"}]}})
         s = mc.parse_probe("eu", out)
         self.assertEqual(s["dropped"], 0, out)
-        self.assertEqual(len(s["keys"][("bot", "defaults")]), 1)
-        self.assertNotIn(next(iter(s["global_keys"])), s["keys"][("bot", "defaults")])  # not the env/global key
+        self.assertEqual(len(s["keys"]["bot"]), 1)
+        self.assertNotIn(next(iter(s["global_keys"])), s["keys"]["bot"])  # not the env/global key
         self.assertIn("|profile", out)
         self.assertNotIn("sk-PROFILE", out)
         self.assertIn("Bearer sk-PROFILE-must-not-leak", json.dumps(calls))  # the list was read with it
@@ -382,17 +378,19 @@ class RealProbe(unittest.TestCase):
         out, calls = self.run_probe({"bot": profiles}, {OPENAI_URL: {"data": [{"id": "gpt-4o"}]}},
                                     order={"openai": ["openai:a"]})
         s = mc.parse_probe("eu", out)
-        self.assertEqual(len(s["keys"][("bot", "defaults")]), 1)
+        self.assertEqual(len(s["keys"]["bot"]), 1)
         sent = json.dumps(calls)
         self.assertIn("sk-IN-ORDER", sent)
         self.assertNotIn("sk-EXCLUDED", sent)
 
-    def test_191_r2_F1_agentDir_outside_the_mount_is_a_scope_error(self):
-        out, _ = self.run_probe({"bot": {}}, {OPENAI_URL: {"data": [{"id": "gpt-4o"}]}},
-                                agents_list=[{"id": "main"}, {"id": "other", "agentDir": "/elsewhere/agent"}])
+    def test_191_r3_agents_list_marks_the_agent_multi_and_reads_no_credentials(self):
+        profiles = {"openai:default": {"type": "api_key", "provider": "openai", "key": "sk-NOT-READ"}}
+        out, calls = self.run_probe({"bot": profiles}, {OPENAI_URL: {"data": [{"id": "gpt-4o"}]}},
+                                    agents_list=[{"id": "main"}, {"id": "other", "agentDir": "/elsewhere/agent"}])
         s = mc.parse_probe("eu", out)
-        self.assertIn(("bot", "list[1]"), s["scope_errors"])
-        self.assertNotIn(("bot", "list[0]"), s["scope_errors"])  # main's folder exists
+        self.assertEqual(s["multi"], {"bot"})
+        self.assertNotIn("bot", s["keys"])
+        self.assertNotIn("sk-NOT-READ", json.dumps(calls))
 
     def test_191_r1_F2_docker_ps_failing_reports_a_host_error(self):
         out, _ = self.run_probe({"bot": {}}, {OPENAI_URL: {"data": [{"id": "gpt-4o"}]}}, docker_exit=1)

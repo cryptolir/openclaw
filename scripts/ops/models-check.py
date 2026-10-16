@@ -46,7 +46,6 @@ CODEX = "openai-codex"
 FP_RE = re.compile(r"^[0-9a-f]{16}$")
 ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,199}$")
 REF_RE = re.compile(r"^[a-z0-9][a-z0-9-]*/\S+$", re.I)
-SCOPE_RE = re.compile(r"^(defaults|list\[\d+\])$")
 PATH_RE = re.compile(r"^agents(\.[A-Za-z0-9_-]+|\[\d+\])*$")
 MODEL_KEYS = ("model", "primary", "fallbacks", "imageModel")
 PAGINATION_KEYS = ("has_more", "next", "next_page", "cursor", "next_cursor")
@@ -106,25 +105,6 @@ if gkey:
     out("GLOBALKEY", fp(gkey))
 now_ms = time.time() * 1000
 
-def scope_dirs(base, agents_cfg):
-    """{scope: host path of its credentials folder, or None} — the gateway's resolveAgentDir:
-    an entry's agentDir, else <state>/agents/<id>/agent. "defaults" is the default agent's (the
-    agents.list entry marked default, else the first one, else id "main")."""
-    entries = [(i, e) for i, e in enumerate(agents_cfg.get("list") or []) if isinstance(e, dict)]
-    def dir_of(e):
-        d = str(e.get("agentDir") or "").strip()
-        if d:
-            for prefix in ("/home/node/.openclaw/", "~/.openclaw/"):
-                if d.startswith(prefix):
-                    return os.path.join(base, d[len(prefix):])
-            return None  # a folder outside the Agent's mount: not readable from here
-        return os.path.join(base, "agents", str(e.get("id") or "main").strip().lower(), "agent")
-    default = next((e for _, e in entries if e.get("default")), entries[0][1] if entries else {"id": "main"})
-    scopes = {"defaults": dir_of(default)}
-    for i, e in entries:
-        scopes["list[%d]" % i] = dir_of(e)
-    return scopes
-
 def ordered(store, cfg, provider):
     """The gateway's resolveAuthProfileOrder base order: store.order, else cfg auth.order, else
     cfg auth.profiles for the provider, else every stored profile for it."""
@@ -150,56 +130,59 @@ for a in sorted(running):
     for path, ref in collect_model_refs(agents_cfg):  # only refs leave the host (I2)
         if "|" not in ref:
             out("REF", a, path, ref)
+    if any(isinstance(e, dict) for e in (agents_cfg.get("list") or [])):
+        # Several agents in one gateway: each may run on its own credentials and inherit models and
+        # profiles from the main one (resolveDefaultModelForAgent, ensureAuthProfileStore). Not
+        # modelled: its OpenAI/ChatGPT refs are reported unverified, never judged (#191 r3).
+        out("MULTI", a)
+        continue
     own = envval(os.path.join(base, "docker.env"), "OPENAI_API_KEY")
     cfg_key = str((((cfg.get("models") or {}).get("providers") or {}).get("openai") or {}).get("apiKey") or "").strip()
-    for scope, d in sorted(scope_dirs(base, agents_cfg).items()):
-        if not d or not os.path.isdir(d):
-            out("SCOPEERR", a, scope)
-            continue
-        try:
-            store = json.load(open(os.path.join(d, "auth-profiles.json")))
-        except Exception:
-            store = {}
-        # OpenAI credentials in the gateway's order (src/agents/model-auth.ts resolveApiKeyForProvider):
-        # every usable `openai` profile in the configured order (it may fail over between them), else
-        # the env key (the Agent's docker.env, else the host global), else a literal config apiKey.
-        prof_keys = []
-        for prof in ordered(store, cfg, "openai"):
-            if prof.get("type") == "api_key":
-                v = str(prof.get("key") or "").strip()
-            elif prof.get("type") == "token" and not (isinstance(prof.get("expires"), (int, float)) and 0 < prof["expires"] <= now_ms):
-                v = str(prof.get("token") or "").strip()
-            else:
-                v = ""
-            if v and not v.startswith("${"):
-                prof_keys.append(v)
-        if prof_keys:
-            cands = [(k, "profile") for k in prof_keys]
-        elif own or gkey:
-            cands = [(own, "own")] if own else [(gkey, "global")]
-        elif cfg_key and not cfg_key.startswith("${"):
-            cands = [(cfg_key, "config")]
+    # The single default agent, `main`: <state>/agents/main/agent (resolveAgentDir).
+    try:
+        store = json.load(open(os.path.join(base, "agents/main/agent/auth-profiles.json")))
+    except Exception:
+        store = {}
+    # OpenAI credentials in the gateway's order (src/agents/model-auth.ts resolveApiKeyForProvider):
+    # every usable `openai` profile in the configured order (it may fail over between them), else
+    # the env key (the Agent's docker.env, else the host global), else a literal config apiKey.
+    prof_keys = []
+    for prof in ordered(store, cfg, "openai"):
+        if prof.get("type") == "api_key":
+            v = str(prof.get("key") or "").strip()
+        elif prof.get("type") == "token" and not (isinstance(prof.get("expires"), (int, float)) and 0 < prof["expires"] <= now_ms):
+            v = str(prof.get("token") or "").strip()
         else:
-            cands = []
-        for k, src in cands:
-            keys[fp(k)] = k
-            out("KEY", a, scope, fp(k), src)
-        for prof in ordered(store, cfg, "openai-codex"):
-            if prof.get("type") != "oauth":
-                continue
-            if not (str(prof.get("access") or "").strip() or str(prof.get("refresh") or "").strip()):
-                continue
-            acc = str(prof.get("accountId") or "").strip()
-            acct = fp(acc) if acc else "?"
-            out("ACCT", a, scope, acct)
-            if acct == "?":
-                continue
-            accts_seen.add(acct)
-            exp = prof.get("expires")
-            tok = str(prof.get("access") or "").strip()
-            # I1: only a token with more than 10 minutes left; never the refresh token, never a refresh.
-            if tok and isinstance(exp, (int, float)) and exp - now_ms > 10 * 60 * 1000 and acct not in tokens:
-                tokens[acct] = (tok, acc)
+            v = ""
+        if v and not v.startswith("${"):
+            prof_keys.append(v)
+    if prof_keys:
+        cands = [(k, "profile") for k in prof_keys]
+    elif own or gkey:
+        cands = [(own, "own")] if own else [(gkey, "global")]
+    elif cfg_key and not cfg_key.startswith("${"):
+        cands = [(cfg_key, "config")]
+    else:
+        cands = []
+    for k, src in cands:
+        keys[fp(k)] = k
+        out("KEY", a, fp(k), src)
+    for prof in ordered(store, cfg, "openai-codex"):
+        if prof.get("type") != "oauth":
+            continue
+        if not (str(prof.get("access") or "").strip() or str(prof.get("refresh") or "").strip()):
+            continue
+        acc = str(prof.get("accountId") or "").strip()
+        acct = fp(acc) if acc else "?"
+        out("ACCT", a, acct)
+        if acct == "?":
+            continue
+        accts_seen.add(acct)
+        exp = prof.get("expires")
+        tok = str(prof.get("access") or "").strip()
+        # I1: only a token with more than 10 minutes left; never the refresh token, never a refresh.
+        if tok and isinstance(exp, (int, float)) and exp - now_ms > 10 * 60 * 1000 and acct not in tokens:
+            tokens[acct] = (tok, acc)
 
 for keyfp, key in sorted(keys.items()):
     try:
@@ -246,7 +229,7 @@ def parse_probe(host: str, stdout: str) -> dict:
     """The probe's lines → a host survey. Any line that is not exactly one of the known shapes, or
     whose fingerprint / id fields fail their pattern, is dropped and counted — never passed on."""
     s = {"host": host, "agents": {}, "keys": {}, "global_keys": set(), "accts": {}, "lists": {},
-         "read": {}, "unverified": {}, "errors": [], "host_errors": [], "scope_errors": set(), "dropped": 0}
+         "read": {}, "unverified": {}, "errors": [], "host_errors": [], "multi": set(), "dropped": 0}
     for line in stdout.splitlines():
         f = line.split("|")
         t = f[0]
@@ -255,15 +238,14 @@ def parse_probe(host: str, stdout: str) -> dict:
                 s["agents"].setdefault(f[1], [])
             elif t == "REF" and len(f) == 4 and f[1] in s["agents"] and PATH_RE.match(f[2]) and REF_RE.match(f[3]):
                 s["agents"][f[1]].append((f[2], f[3]))
-            elif (t == "KEY" and len(f) == 5 and SCOPE_RE.match(f[2]) and FP_RE.match(f[3])
-                  and f[4] in ("profile", "own", "global", "config")):
-                s["keys"].setdefault((f[1], f[2]), set()).add(f[3])
+            elif t == "KEY" and len(f) == 4 and FP_RE.match(f[2]) and f[3] in ("profile", "own", "global", "config"):
+                s["keys"].setdefault(f[1], set()).add(f[2])
             elif t == "GLOBALKEY" and len(f) == 2 and FP_RE.match(f[1]):
                 s["global_keys"].add(f[1])
-            elif t == "ACCT" and len(f) == 4 and SCOPE_RE.match(f[2]) and (FP_RE.match(f[3]) or f[3] == "?"):
-                s["accts"].setdefault((f[1], f[2]), set()).add(f[3])
-            elif t == "SCOPEERR" and len(f) == 3 and SCOPE_RE.match(f[2]):
-                s["scope_errors"].add((f[1], f[2]))
+            elif t == "ACCT" and len(f) == 3 and (FP_RE.match(f[2]) or f[2] == "?"):
+                s["accts"].setdefault(f[1], set()).add(f[2])
+            elif t == "MULTI" and len(f) == 2 and f[1] in s["agents"]:
+                s["multi"].add(f[1])
             elif t == "LIST" and len(f) == 4 and f[1] == "openai" and FP_RE.match(f[2]) and ID_RE.match(f[3]):
                 s["lists"].setdefault(("openai", f[2]), []).append({"id": f[3]})
             elif t == "LIST" and len(f) == 6 and f[1] == CODEX and FP_RE.match(f[2]) and ID_RE.match(f[3]):
@@ -330,12 +312,6 @@ def collect_model_refs(agents: object) -> list[tuple[str, str]]:
 
     walk(agents, "agents")
     return out
-
-
-def scope_of(path: str) -> str:
-    """Whose credentials a model setting runs on: an agents.list[i] entry's, else the default agent's."""
-    m = re.match(r"agents\.list\[(\d+)\]", path)
-    return f"list[{m.group(1)}]" if m else "defaults"
 
 
 def is_primary(path: str) -> bool:
@@ -439,13 +415,16 @@ def analyse(surveys: list[dict], public: dict, state: dict, curated: list[str]):
         judge((prov, "-"), None if ids is None else [{"id": i} for i in ids], err)
     for s in surveys:
         for key in set(s["read"]) | set(s["unverified"]):
-            if key in accepted or key in why_not:
-                continue  # the same credential on two hosts: first answer wins
+            # The same credential on two hosts: the first accepted list wins, and a later success
+            # replaces an earlier failure (#191 r3 F3) — one host's 401 never hides another's read.
+            if key in accepted:
+                continue
             if key in s["unverified"]:
-                why_not[key] = s["unverified"][key]
+                why_not.setdefault(key, s["unverified"][key])
             elif len(s["lists"].get(key, [])) != s["read"][key]:
-                why_not[key] = f"{s['read'][key]} entries read, {len(s['lists'].get(key, []))} parsed — lines dropped"
+                why_not.setdefault(key, f"{s['read'][key]} entries read, {len(s['lists'].get(key, []))} parsed — lines dropped")
             else:
+                why_not.pop(key, None)
                 judge(key, s["lists"].get(key, []))
         for e in s["host_errors"]:
             # The whole server went unchecked — never a quiet "0 Agents" (#191 r1 F2).
@@ -464,12 +443,10 @@ def analyse(surveys: list[dict], public: dict, state: dict, curated: list[str]):
         for agent, refs in sorted(s["agents"].items()):
             for path, ref in refs:
                 prov, _, mid = ref.partition("/")
-                who = (agent, scope_of(path))
-                accts = sorted(s["accts"].get(who, set()))
-                if who in s["scope_errors"] and prov in (CODEX, "openai"):
-                    # Its credentials folder could not be read: never judged (#191 r2 F1).
+                accts = sorted(s["accts"].get(agent, set()))
+                if agent in s["multi"] and prov in (CODEX, "openai"):
                     unverified_refs += 1
-                    blocked_by.setdefault(("scope", f"{agent} {who[1]}"), set()).add(agent)
+                    blocked_by.setdefault(("multi", agent), set()).add(agent)
                     continue
                 if prov == CODEX:
                     v = codex_verdict(mid, accts, codex_lists)
@@ -479,7 +456,7 @@ def analyse(surveys: list[dict], public: dict, state: dict, curated: list[str]):
                                 blocked_by.setdefault((CODEX, a), set()).add(agent)
                 elif prov == "openai":
                     # Same rule as ChatGPT: the gateway may use any of the Agent's OpenAI keys.
-                    fps = sorted(s["keys"].get(who, set()))
+                    fps = sorted(s["keys"].get(agent, set()))
                     v = any_serves(mid, [("openai", k) for k in fps], accepted)
                     if v == "unverified":
                         for k in fps or [""]:
@@ -506,10 +483,10 @@ def analyse(surveys: list[dict], public: dict, state: dict, curated: list[str]):
                     unverified_refs += 1
 
     for key, agents in sorted(blocked_by.items()):
-        if key[0] == "scope":
-            issues.append(Issue("P3", "models", "-", "Could not check an agent's credentials",
-                                f"{key[1]}: its credentials folder (agentDir) was not found or is outside the "
-                                f"Agent's mount, so its OpenAI/ChatGPT models were not checked."))
+        if key[0] == "multi":
+            issues.append(Issue("P3", "models", key[1], "OpenAI/ChatGPT models not checked",
+                                "this Agent defines several agents (agents.list), each with its own credentials; "
+                                "the models check does not model that, so these models were not judged."))
             continue
         why = why_not.get(key) or NO_CREDENTIAL.get(key, "not read")
         label = "ChatGPT account" if key[0] == CODEX else f"{key[0]} list"
