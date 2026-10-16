@@ -76,3 +76,4 @@ jobs:
         run: |
           python3 scripts/ops/test_env_source_check.py
           python3 scripts/ops/test_no_pipe_into_grep_q.py
+          python3 scripts/ops/test_models_check.py

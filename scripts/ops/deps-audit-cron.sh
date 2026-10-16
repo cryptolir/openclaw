@@ -14,6 +14,10 @@
 #                      container has (read daily) with the Targets in
 #                      DEPENDENCIES.md "Pinned versions", and each Target with its
 #                      newest upstream release (looked up weekly, Mondays).
+#   D. Models        — models-check.py: is every model a running Agent uses still
+#                      offered (Venice, OpenRouter, OpenAI per key, ChatGPT per
+#                      account)? Pushes each ChatGPT account's list to the dashboard
+#                      picker. Runs in the background, alongside C.
 #
 # Output mirrors models_connectivity_check.sh: it writes two state files that the
 # 06:00 fleet diagnostic ingests for ONE combined email + bug_list AUTOSCAN:
@@ -197,6 +201,22 @@ done <<<"$donor"
 # 5. OpenRouter — deduped (models check owns it).
 row "openrouter" "Y" "n/a" "see MODEL CONNECTIVITY block"
 
+# ── Phase D — models (started first: it runs alongside phase C) ──────────────
+# Plan: dashboard docs/plans/active/model-catalog-check.md. CRON_SECRET (for the
+# push to /api/cron/model-lists) comes from the 06:00 diagnostic's env file, read
+# in this subshell only. Its own timeout keeps the job inside the cron's 300s.
+MODELS_REPORT="${MODELS_REPORT:-/var/tmp/agentglob-modelscheck-report.txt}"
+MODELS_ISSUES="${MODELS_ISSUES:-/var/tmp/agentglob-modelscheck-issues.txt}"
+MODELS_STATE="${MODELS_STATE:-/var/tmp/agentglob-modelscheck-state.json}"
+MODELS_CHECK="${MODELS_CHECK:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/models-check.py}"
+DIAG_ENV="${DIAG_ENV:-/root/.config/agentglob/diag.env}"
+(
+  set -a; [ -r "$DIAG_ENV" ] && . "$DIAG_ENV"; set +a
+  SSH_KEY="$SSH_KEY" timeout 170 python3 "$MODELS_CHECK" --report "$MODELS_REPORT" --issues "$MODELS_ISSUES" \
+    --state "$MODELS_STATE" --dash-repo "$DASH_REPO" >/dev/null
+) &
+models_pid=$!
+
 # ── Phase C — versions (DEPENDENCIES.md "Pinned versions") ───────────────────
 # Daily: what every server and container runs is read on every run, so a fix or
 # a hold shows the next morning. The newest upstream versions are looked up
@@ -219,6 +239,17 @@ if [ -n "$(find "$VERSIONS_ISSUES" -mmin -$((8*24*60)) 2>/dev/null)" ]; then
   versions_report="$(cat "$VERSIONS_REPORT" 2>/dev/null)"
 fi
 
+# Phase D's result. A failed run leaves the last good files: they stand in for
+# 2 days only — a model finding older than that may already be fixed.
+models_report=""
+if ! wait "$models_pid"; then
+  iss "ISSUE|P2|models|-|Models check failed|models-check.py failed or timed out (170s); see /var/log/agentglob-deps.log. The findings shown are from its last good run, if under 2 days old."
+fi
+if [ -n "$(find "$MODELS_ISSUES" -mmin -$((2*24*60)) 2>/dev/null)" ]; then
+  issues="${issues}$(grep '^ISSUE|' "$MODELS_ISSUES")"$'\n'
+  models_report="$(cat "$MODELS_REPORT" 2>/dev/null)"
+fi
+
 # ── Emit + state files (consumed by the 06:00 diagnostic) ─────────────────────
 final="Dependency audit — $(date -u '+%Y-%m-%d %H:%M:%S UTC')
 probe: liveness · timeout ${TIMEOUT_S}s · donor ${KEY_AGENT}@${KEY_HOST}
@@ -227,5 +258,8 @@ ${report}"
 [ -n "$versions_report" ] && final="${final}
 
 ${versions_report}"
+[ -n "$models_report" ] && final="${final}
+
+${models_report}"
 printf '%s\n' "$final" | tee "$REPORT_FILE"
 printf '%s' "$issues" > "$ISSUES_FILE" 2>/dev/null || true
