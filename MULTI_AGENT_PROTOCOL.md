@@ -59,7 +59,7 @@ Rules:
 
 Routine development now happens on `DevAgents`, not the local Mac mirror.
 
-- SSH: `ssh DevAgents`
+- SSH: `ssh DevAgents` — the alias may not exist on the client machine; if it doesn't, use `ssh -i ~/.ssh/hetzner-openclaw root@204.168.223.245`
 - Host: `root@204.168.223.245`
 - Gateway repo: `/root/AgentGlob_Apps/openclaw`
 - Dashboard repo: `/root/AgentGlob_Apps/openclaw-dashboard`
@@ -135,11 +135,11 @@ Routine development, builds, git operations, and deployments happen on **DevAgen
 
 ### Servers
 
-| Server     | IP                | Role                          |
-| ---------- | ----------------- | ----------------------------- |
-| DevAgents  | `204.168.223.245` | Primary development host      |
-| EU prod    | `89.167.70.46`    | Primary production Agent host |
-| US standby | `5.161.84.219`    | Standby Agent host            |
+| Server            | IP                | Role                     |
+| ----------------- | ----------------- | ------------------------ |
+| DevAgents         | `204.168.223.245` | Primary development host |
+| EU prod (1stClaw) | `89.167.70.46`    | Production Agent host    |
+| US prod (2ndClaw) | `5.161.84.219`    | Production Agent host    |
 
 ### Dashboard
 
@@ -150,9 +150,13 @@ Routine development, builds, git operations, and deployments happen on **DevAgen
 
 ### Gateway
 
+The full rules live in `AGENTS.md` → "Gateway Deploy Protocol". In short:
+
 - Artifact Registry: `europe-west1-docker.pkg.dev/gold-verve-459312-e7/openclaw-gateway/gateway`
-- Build/push from DevAgents: `/opt/openclaw-ops/scripts/build-and-push.sh <tag>`
-- Deploy from DevAgents: `/opt/openclaw-ops/scripts/deploy.sh <tag>`
+- Build/push from DevAgents: `/opt/openclaw-ops/scripts/build-and-push.sh` with no tag — let it pick one (an explicit tag can overwrite an existing registry tag, 2026-09-07)
+- Make a release the default: pilot it on one Agent, then promote it (`POST /api/platform/releases/<tag>/promote`)
+- Roll a prod Agent: only the owner's per-Agent dashboard **Upgrade** (Agent → Overview → Release box, openclaw-dashboard #690)
+- Do **not** use `deploy.sh` for a prod roll — it rolls every Agent on a server, pilots and stopped ones included (#179 review). Only when the owner asks.
 - Tag format: `vYYYY.M.D.N` or `vYYYY.M.D.N-hotfix`
 
 ---
@@ -194,7 +198,7 @@ When one agent finishes a task the other agent should continue:
 ## 10. Session Start Checklist
 
 ```text
-[ ] ssh DevAgents
+[ ] ssh DevAgents   (no alias? ssh -i ~/.ssh/hetzner-openclaw root@204.168.223.245)
 [ ] cd /root/AgentGlob_Apps/openclaw
 [ ] Read STATUS.md, MULTI_AGENT_PROTOCOL.md, AGENTS.md, CODEX_TASK_BRIEF.md
 [ ] Check git status and current branch
