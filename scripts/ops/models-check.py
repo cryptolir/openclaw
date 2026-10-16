@@ -89,10 +89,12 @@ def paginated(d):
 
 running = set()
 try:
-    ps = subprocess.run(["docker", "ps", "--format", "{{.Names}}"], capture_output=True, text=True, timeout=30).stdout
-    running = {n[: -len("-openclaw-gateway-1")] for n in ps.split() if n.endswith("-openclaw-gateway-1")}
+    ps = subprocess.run(["docker", "ps", "--format", "{{.Names}}"], capture_output=True, text=True, timeout=30)
+    if ps.returncode != 0:
+        out("HOSTERR", clean("docker ps exit %s: %s" % (ps.returncode, ps.stderr.strip()[-100:])))
+    running = {n[: -len("-openclaw-gateway-1")] for n in ps.stdout.split() if n.endswith("-openclaw-gateway-1")}
 except Exception as e:
-    out("PROBEERR", clean("docker ps: %s" % e))
+    out("HOSTERR", clean("docker ps: %s" % e))
 
 gkey = envval("/opt/openclaw/.env", "OPENAI_API_KEY")
 keys = {}            # keyfp -> key   (never printed)
@@ -113,15 +115,38 @@ for a in sorted(running):
     for path, ref in collect_model_refs(cfg.get("agents") or {}):  # only refs leave the host (I2)
         if "|" not in ref:
             out("REF", a, path, ref)
-    own = envval(os.path.join(base, "docker.env"), "OPENAI_API_KEY")
-    k = own or gkey
-    if k:
-        keys[fp(k)] = k
-        out("KEY", a, fp(k), "own" if own else "global")
     try:
         store = json.load(open(os.path.join(base, "agents/main/agent/auth-profiles.json")))
     except Exception:
         store = {}
+    # OpenAI credentials in the gateway's order (src/agents/model-auth.ts resolveApiKeyForProvider):
+    # every usable `openai` profile (it may fail over between them), else the env key (the Agent's
+    # docker.env, else the host global), else a literal models.providers.openai.apiKey.
+    prof_keys = []
+    for prof in (store.get("profiles") or {}).values():
+        if not isinstance(prof, dict) or prof.get("provider") != "openai":
+            continue
+        if prof.get("type") == "api_key":
+            v = str(prof.get("key") or "").strip()
+        elif prof.get("type") == "token" and not (isinstance(prof.get("expires"), (int, float)) and prof["expires"] < now_ms):
+            v = str(prof.get("token") or "").strip()
+        else:
+            v = ""
+        if v and not v.startswith("${"):
+            prof_keys.append(v)
+    own = envval(os.path.join(base, "docker.env"), "OPENAI_API_KEY")
+    cfg_key = str((((cfg.get("models") or {}).get("providers") or {}).get("openai") or {}).get("apiKey") or "").strip()
+    if prof_keys:
+        cands = [(k, "profile") for k in prof_keys]
+    elif own or gkey:
+        cands = [(own, "own")] if own else [(gkey, "global")]
+    elif cfg_key and not cfg_key.startswith("${"):
+        cands = [(cfg_key, "config")]
+    else:
+        cands = []
+    for k, src in cands:
+        keys[fp(k)] = k
+        out("KEY", a, fp(k), src)
     for prof in (store.get("profiles") or {}).values():
         if not isinstance(prof, dict) or prof.get("provider") != "openai-codex" or prof.get("type") != "oauth":
             continue
@@ -184,7 +209,7 @@ def parse_probe(host: str, stdout: str) -> dict:
     """The probe's lines → a host survey. Any line that is not exactly one of the known shapes, or
     whose fingerprint / id fields fail their pattern, is dropped and counted — never passed on."""
     s = {"host": host, "agents": {}, "keys": {}, "global_keys": set(), "accts": {}, "lists": {},
-         "read": {}, "unverified": {}, "errors": [], "dropped": 0}
+         "read": {}, "unverified": {}, "errors": [], "host_errors": [], "dropped": 0}
     for line in stdout.splitlines():
         f = line.split("|")
         t = f[0]
@@ -193,8 +218,8 @@ def parse_probe(host: str, stdout: str) -> dict:
                 s["agents"].setdefault(f[1], [])
             elif t == "REF" and len(f) == 4 and f[1] in s["agents"] and PATH_RE.match(f[2]) and REF_RE.match(f[3]):
                 s["agents"][f[1]].append((f[2], f[3]))
-            elif t == "KEY" and len(f) == 4 and FP_RE.match(f[2]) and f[3] in ("own", "global"):
-                s["keys"][f[1]] = f[2]
+            elif t == "KEY" and len(f) == 4 and FP_RE.match(f[2]) and f[3] in ("profile", "own", "global", "config"):
+                s["keys"].setdefault(f[1], set()).add(f[2])
             elif t == "GLOBALKEY" and len(f) == 2 and FP_RE.match(f[1]):
                 s["global_keys"].add(f[1])
             elif t == "ACCT" and len(f) == 3 and (FP_RE.match(f[2]) or f[2] == "?"):
@@ -210,8 +235,10 @@ def parse_probe(host: str, stdout: str) -> dict:
                 s["read"][(f[1], f[2])] = int(f[3])
             elif t == "UNVERIFIED" and len(f) == 4 and f[1] in ("openai", CODEX) and FP_RE.match(f[2]):
                 s["unverified"][(f[1], f[2])] = f[3][:120]
-            elif t in ("CFGERR", "PROBEERR") and len(f) == 2:
-                s["errors"].append(f"{t.lower()} {f[1][:120]}")
+            elif t == "HOSTERR" and len(f) == 2:
+                s["host_errors"].append(f[1][:120])
+            elif t == "CFGERR" and len(f) == 2:
+                s["errors"].append(f"openclaw.json unreadable for {f[1][:80]}")
             else:
                 s["dropped"] += 1
         except ValueError:
@@ -227,11 +254,11 @@ def survey_host(host: str, timeout: int = 120) -> dict:
             input=PROBE, capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired:
         s = parse_probe(host, "")
-        s["errors"].append(f"timed out after {timeout}s")
+        s["host_errors"].append(f"timed out after {timeout}s")
         return s
     s = parse_probe(host, r.stdout)
     if r.returncode != 0:
-        s["errors"].append(f"ssh exit {r.returncode}: {(r.stderr or '').strip()[-120:] or 'no output'}")
+        s["host_errors"].append(f"ssh exit {r.returncode}: {(r.stderr or '').strip()[-120:] or 'no output'}")
     return s
 
 
@@ -296,6 +323,16 @@ def codex_verdict(model_id: str, accts: list[str], lists: dict, now_h: float = 0
 
 # The probe carries the same walker, so a model setting is read on the host and only refs travel.
 PROBE = PROBE_HEAD + inspect.getsource(collect_model_refs) + PROBE_BODY
+
+
+def any_serves(model_id: str, creds: list[tuple[str, str]], accepted: dict) -> str:
+    """ok if any credential's accepted list has the id; dead only if every credential's list was
+    accepted and none has it; else unverified. ChatGPT's codex_verdict is the same rule with ages."""
+    if not creds:
+        return "unverified"
+    if any(model_id in {e["id"] for e in accepted.get(c, [])} for c in creds):
+        return "ok"
+    return "dead" if all(c in accepted for c in creds) else "unverified"
 
 
 def read_public(url: str) -> tuple[list[str] | None, str]:
@@ -364,6 +401,9 @@ def analyse(surveys: list[dict], public: dict, state: dict, curated: list[str]):
                 why_not[key] = f"{s['read'][key]} entries read, {len(s['lists'].get(key, []))} parsed — lines dropped"
             else:
                 judge(key, s["lists"].get(key, []))
+        for e in s["host_errors"]:
+            # The whole server went unchecked — never a quiet "0 Agents" (#191 r1 F2).
+            issues.append(Issue("P2", s["host"], "-", "Models check could not survey this server", e))
         for e in s["errors"]:
             issues.append(Issue("P3", s["host"], "-", "Models check probe problem", e))
         if s["dropped"]:
@@ -385,8 +425,16 @@ def analyse(surveys: list[dict], public: dict, state: dict, curated: list[str]):
                         for a in accts or ["none"]:
                             if a not in codex_lists:
                                 blocked_by.setdefault((CODEX, a), set()).add(agent)
-                elif prov in ("venice", "openrouter", "openai"):
-                    key = (prov, "-") if prov != "openai" else ("openai", s["keys"].get(agent, ""))
+                elif prov == "openai":
+                    # Same rule as ChatGPT: the gateway may use any of the Agent's OpenAI keys.
+                    fps = sorted(s["keys"].get(agent, set()))
+                    v = any_serves(mid, [("openai", k) for k in fps], accepted)
+                    if v == "unverified":
+                        for k in fps or [""]:
+                            if ("openai", k) not in accepted:
+                                blocked_by.setdefault(("openai", k), set()).add(agent)
+                elif prov in ("venice", "openrouter"):
+                    key = (prov, "-")
                     if key in accepted:
                         v = "ok" if mid in {e["id"] for e in accepted[key]} else "dead"
                     else:
@@ -413,7 +461,7 @@ def analyse(surveys: list[dict], public: dict, state: dict, curated: list[str]):
                             f"{label}{cred}: {why}. Agents not checked: {', '.join(sorted(agents))}."))
 
     # The curated OpenAI list (r2 F1, r3 F3): remove only when NO effective key serves it.
-    eff = sorted({k for s in surveys for k in list(s["keys"].values()) + list(s["global_keys"]) if k})
+    eff = sorted({k for s in surveys for k in set().union(*s["keys"].values(), s["global_keys"]) if k})
     eff_lists = [{e["id"] for e in accepted[("openai", k)]} for k in eff if ("openai", k) in accepted]
     all_read = bool(eff) and len(eff_lists) == len(eff)
     for mid in curated:

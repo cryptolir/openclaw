@@ -31,11 +31,12 @@ K1, K2 = "1" * 16, "2" * 16
 def survey(host="eu", agents=None, keys=None, global_keys=(), accts=None, lists=None, unverified=None):
     """A host survey as parse_probe() would build it; READ counts follow the lists."""
     lists = lists or {}
-    return {"host": host, "agents": agents or {}, "keys": keys or {}, "global_keys": set(global_keys),
+    return {"host": host, "agents": agents or {}, "global_keys": set(global_keys),
             "accts": {a: set(v) for a, v in (accts or {}).items()},
+            "keys": {a: ({v} if isinstance(v, str) else set(v)) for a, v in (keys or {}).items()},
             "lists": {k: [{"id": i} for i in v] for k, v in lists.items()},
             "read": {k: len(v) for k, v in lists.items()}, "unverified": unverified or {},
-            "errors": [], "dropped": 0}
+            "errors": [], "host_errors": [], "dropped": 0}
 
 
 PUBLIC_OK = {"venice": (["kimi-k3", "claude-sonnet-5"], ""), "openrouter": (["openrouter/free"], "")}
@@ -124,6 +125,15 @@ class Findings(unittest.TestCase):
         issues, _, _, _ = mc.analyse([s], PUBLIC_OK, {}, [])
         self.assertEqual([i.agent for i in pri(issues, "P1")], ["k2"])
 
+    def test_191_r1_F1_openai_keys_any_serves_rule(self):
+        # profile keys K1 and K2 (the gateway may fail over between them): ok if either serves it
+        s = survey(agents={"two": [("agents.defaults.model.primary", "openai/gpt-4o")],
+                           "one": [("agents.defaults.model.primary", "openai/gpt-4o")]},
+                   keys={"two": [K1, K2], "one": [K2]},
+                   lists={("openai", K1): ["gpt-4o"], ("openai", K2): ["o3"]})
+        issues, _, _, _ = mc.analyse([s], PUBLIC_OK, {}, [])
+        self.assertEqual([i.agent for i in pri(issues, "P1")], ["one"])
+
     def test_r3_F1_multi_profile_agent_ok_when_any_account_serves_it(self):
         s = survey(agents={"two": [("agents.defaults.model.primary", "openai-codex/x")]},
                    accts={"two": {A, B}}, lists={("openai-codex", A): ["y"], ("openai-codex", B): ["x"]})
@@ -144,6 +154,14 @@ class Findings(unittest.TestCase):
         self.assertIn("no ChatGPT login", details)
         self.assertIn("no OpenAI key", details)
         self.assertFalse(pri(issues, "P1"))
+
+
+class HostErrors(unittest.TestCase):
+    def test_191_r1_F2_a_failed_docker_ps_is_a_P2_not_zero_agents(self):
+        s = mc.parse_probe("us", "HOSTERR|docker ps exit 1: Cannot connect to the Docker daemon")
+        issues, _, _, _ = mc.analyse([s], PUBLIC_OK, {}, [])
+        self.assertEqual([(i.pri, i.host, i.title) for i in issues],
+                         [("P2", "us", "Models check could not survey this server")])
 
 
 class CuratedOpenAI(unittest.TestCase):
@@ -233,7 +251,7 @@ OPENAI_URL = "https://api.openai.com/v1/models"
 
 
 class RealProbe(unittest.TestCase):
-    def run_probe(self, profiles_by_agent, answers, global_key="sk-GLOBALKEY-xyz"):
+    def run_probe(self, profiles_by_agent, answers, global_key="sk-GLOBALKEY-xyz", docker_exit=0):
         tmp = tempfile.mkdtemp()
         agents = os.path.join(tmp, "agents")
         for name, profiles in profiles_by_agent.items():
@@ -250,7 +268,8 @@ class RealProbe(unittest.TestCase):
         stub = os.path.join(tmp, "bin")
         os.makedirs(stub)
         with open(os.path.join(stub, "docker"), "w") as f:
-            f.write("#!/bin/sh\n" + "".join(f"echo {n}-openclaw-gateway-1\n" for n in profiles_by_agent))
+            f.write("#!/bin/sh\n" + "".join(f"echo {n}-openclaw-gateway-1\n" for n in profiles_by_agent)
+                    + (f"echo daemon down >&2\nexit {docker_exit}\n" if docker_exit else ""))
         os.chmod(os.path.join(stub, "docker"), 0o755)
 
         probe = mc.PROBE
@@ -313,6 +332,21 @@ class RealProbe(unittest.TestCase):
                 issues, _, push, _ = mc.analyse([s], PUBLIC_OK, {}, [])
                 self.assertEqual(push, {})
                 self.assertTrue(any("bump CODEX_CLIENT_VERSION" in i.detail for i in issues))
+
+    def test_191_r1_F1_an_openai_profile_key_wins_over_the_env_key(self):
+        profiles = {"openai:default": {"type": "api_key", "provider": "openai", "key": "sk-PROFILE-must-not-leak"}}
+        out, calls = self.run_probe({"bot": profiles}, {OPENAI_URL: {"data": [{"id": "gpt-4o"}]}})
+        s = mc.parse_probe("eu", out)
+        self.assertEqual(s["dropped"], 0, out)
+        self.assertEqual(len(s["keys"]["bot"]), 1)
+        self.assertNotIn(next(iter(s["global_keys"])), s["keys"]["bot"])  # not the env/global key
+        self.assertIn("|profile", out)
+        self.assertNotIn("sk-PROFILE", out)
+        self.assertIn("Bearer sk-PROFILE-must-not-leak", json.dumps(calls))  # the list was read with it
+
+    def test_191_r1_F2_docker_ps_failing_reports_a_host_error(self):
+        out, _ = self.run_probe({"bot": {}}, {OPENAI_URL: {"data": [{"id": "gpt-4o"}]}}, docker_exit=1)
+        self.assertTrue(mc.parse_probe("eu", out)["host_errors"], out)
 
     def test_a_401_is_unverified_and_never_retried(self):
         out, calls = self.run_probe({"bot": {"openai-codex:default": self.profile("acc-1", 120)}},
