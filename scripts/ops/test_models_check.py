@@ -29,7 +29,7 @@ K1, K2 = "1" * 16, "2" * 16
 
 
 def survey(host="eu", agents=None, keys=None, global_keys=(), accts=None, lists=None, unverified=None,
-           multi=()):
+           multi=(), custom=()):
     """A host survey as parse_probe() would build it; READ counts follow the lists."""
     lists = lists or {}
     return {"host": host, "agents": agents or {}, "global_keys": set(global_keys),
@@ -37,7 +37,7 @@ def survey(host="eu", agents=None, keys=None, global_keys=(), accts=None, lists=
             "keys": {a: ({v} if isinstance(v, str) else set(v)) for a, v in (keys or {}).items()},
             "lists": {k: [{"id": i} for i in v] for k, v in lists.items()},
             "read": {k: len(v) for k, v in lists.items()}, "unverified": unverified or {},
-            "errors": [], "host_errors": [], "multi": set(multi), "dropped": 0}
+            "errors": [], "host_errors": [], "multi": set(multi), "custom": set(custom), "dropped": 0}
 
 
 PUBLIC_OK = {"venice": (["kimi-k3", "claude-sonnet-5"], ""), "openrouter": (["openrouter/free"], "")}
@@ -146,6 +146,26 @@ class Findings(unittest.TestCase):
         self.assertEqual([(i.pri, i.title) for i in issues if i.agent == "multi"],
                          [("P1", "Model no longer offered"), ("P3", "OpenAI/ChatGPT models not checked")])
         self.assertIn("venice/gone", pri(issues, "P1")[0].detail)  # agents.list[1].model is that entry's primary
+
+    def test_191_r4_F2_offered_by_only_some_credentials_is_P2_not_healthy(self):
+        s = survey(agents={"two": [("agents.defaults.model.primary", "openai-codex/x"),
+                                   ("agents.defaults.model.fallbacks[0]", "openai/gpt-4o")]},
+                   accts={"two": {A, B}}, keys={"two": [K1, K2]},
+                   lists={("openai-codex", A): ["x"], ("openai-codex", B): ["y"],
+                          ("openai", K1): ["gpt-4o"], ("openai", K2): ["o3"]})
+        issues, _, _, _ = mc.analyse([s], PUBLIC_OK, {}, [])
+        self.assertFalse(pri(issues, "P1"))
+        p2 = [i for i in pri(issues, "P2") if i.title == "Model offered by only some credentials"]
+        self.assertEqual(sorted(i.detail.split(" at ")[0] for i in p2), ["openai-codex/x", "openai/gpt-4o"])
+        # the shared rule itself is unchanged: still "ok" for the picker and the save gate
+        self.assertEqual(mc.codex_verdict("x", [A, B], {A: {"models": ["x"]}, B: {"models": ["y"]}}), "ok")
+
+    def test_191_r4_F1_a_custom_endpoint_agent_is_P3_and_never_judged(self):
+        s = survey(agents={"proxy": [("agents.defaults.model.primary", "openai/gpt-4o")]},
+                   lists={("openai", K1): ["o3"]}, custom=[("proxy", "openai")])
+        issues, _, _, _ = mc.analyse([s], PUBLIC_OK, {}, [])
+        self.assertEqual([(i.pri, i.title) for i in issues],
+                         [("P3", "Models on a custom endpoint not checked")])
 
     def test_191_r3_F3_a_later_host_success_replaces_an_earlier_failure(self):
         eu = survey("eu", accts={"x": {A}}, unverified={("openai-codex", A): "401"})
@@ -277,7 +297,7 @@ OPENAI_URL = "https://api.openai.com/v1/models"
 
 class RealProbe(unittest.TestCase):
     def run_probe(self, profiles_by_agent, answers, global_key="sk-GLOBALKEY-xyz", docker_exit=0,
-                  order=None, agents_list=None):
+                  order=None, agents_list=None, providers=None):
         tmp = tempfile.mkdtemp()
         agents = os.path.join(tmp, "agents")
         for name, profiles in profiles_by_agent.items():
@@ -287,7 +307,8 @@ class RealProbe(unittest.TestCase):
                 agents_cfg = {"defaults": {"model": {"primary": "openai-codex/gpt-5.5"}}}
                 if agents_list is not None:
                     agents_cfg["list"] = agents_list
-                json.dump({"agents": agents_cfg, "gateway": {"auth": {"token": "GW-TOKEN-must-not-leak"}}}, f)
+                json.dump({"agents": agents_cfg, "gateway": {"auth": {"token": "GW-TOKEN-must-not-leak"}},
+                           **({"models": {"providers": providers}} if providers else {})}, f)
             with open(os.path.join(base, "agents/main/agent/auth-profiles.json"), "w") as f:
                 json.dump({"profiles": profiles, **({"order": order} if order is not None else {})}, f)
         env_file = os.path.join(tmp, "global.env")
@@ -391,6 +412,26 @@ class RealProbe(unittest.TestCase):
         self.assertEqual(s["multi"], {"bot"})
         self.assertNotIn("bot", s["keys"])
         self.assertNotIn("sk-NOT-READ", json.dumps(calls))
+
+    def test_191_r4_F1_a_custom_baseUrl_key_is_never_sent(self):
+        profiles = {"openai:default": {"type": "api_key", "provider": "openai", "key": "sk-PROXY-KEY"},
+                    "openai-codex:default": self.profile("acc-1", 120, access="PROXY-ACCESS")}
+        out, calls = self.run_probe({"bot": profiles}, {OPENAI_URL: {"data": [{"id": "gpt-4o"}]}},
+                                    providers={"openai": {"baseUrl": "https://proxy.example/v1"},
+                                               "openai-codex": {"baseUrl": "https://other.example/codex"}})
+        s = mc.parse_probe("eu", out)
+        self.assertEqual(s["custom"], {("bot", "openai"), ("bot", "openai-codex")})
+        sent = json.dumps(calls)
+        self.assertNotIn("sk-PROXY-KEY", sent)
+        self.assertNotIn("PROXY-ACCESS", sent)
+        self.assertFalse([c for c in calls if c["url"].startswith(CODEX_URL)])
+
+    def test_191_r4_F1_the_official_baseUrl_is_not_custom(self):
+        profiles = {"openai:default": {"type": "api_key", "provider": "openai", "key": "sk-REAL"}}
+        out, calls = self.run_probe({"bot": profiles}, {OPENAI_URL: {"data": [{"id": "gpt-4o"}]}},
+                                    providers={"openai": {"baseUrl": "https://api.openai.com/v1"}})
+        self.assertEqual(mc.parse_probe("eu", out)["custom"], set())
+        self.assertIn("sk-REAL", json.dumps(calls))
 
     def test_191_r1_F2_docker_ps_failing_reports_a_host_error(self):
         out, _ = self.run_probe({"bot": {}}, {OPENAI_URL: {"data": [{"id": "gpt-4o"}]}}, docker_exit=1)

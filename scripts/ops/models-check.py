@@ -136,8 +136,15 @@ for a in sorted(running):
         # modelled: its OpenAI/ChatGPT refs are reported unverified, never judged (#191 r3).
         out("MULTI", a)
         continue
+    providers = (cfg.get("models") or {}).get("providers") or {}
+    def custom_endpoint(provider, official):
+        """A baseUrl the gateway sends this provider's credentials to, other than the official one:
+        those credentials are never sent anywhere by this probe (#191 r4 F1)."""
+        bu = str((providers.get(provider) or {}).get("baseUrl") or "").strip()
+        host = bu.split("//", 1)[-1].split("/", 1)[0].lower()
+        return bool(bu) and host != official
     own = envval(os.path.join(base, "docker.env"), "OPENAI_API_KEY")
-    cfg_key = str((((cfg.get("models") or {}).get("providers") or {}).get("openai") or {}).get("apiKey") or "").strip()
+    cfg_key = str((providers.get("openai") or {}).get("apiKey") or "").strip()
     # The single default agent, `main`: <state>/agents/main/agent (resolveAgentDir).
     try:
         store = json.load(open(os.path.join(base, "agents/main/agent/auth-profiles.json")))
@@ -156,7 +163,10 @@ for a in sorted(running):
             v = ""
         if v and not v.startswith("${"):
             prof_keys.append(v)
-    if prof_keys:
+    if custom_endpoint("openai", "api.openai.com"):
+        out("CUSTOM", a, "openai")
+        cands = []
+    elif prof_keys:
         cands = [(k, "profile") for k in prof_keys]
     elif own or gkey:
         cands = [(own, "own")] if own else [(gkey, "global")]
@@ -167,7 +177,10 @@ for a in sorted(running):
     for k, src in cands:
         keys[fp(k)] = k
         out("KEY", a, fp(k), src)
-    for prof in ordered(store, cfg, "openai-codex"):
+    codex_custom = custom_endpoint("openai-codex", "chatgpt.com")
+    if codex_custom:
+        out("CUSTOM", a, "openai-codex")
+    for prof in ([] if codex_custom else ordered(store, cfg, "openai-codex")):
         if prof.get("type") != "oauth":
             continue
         if not (str(prof.get("access") or "").strip() or str(prof.get("refresh") or "").strip()):
@@ -229,7 +242,7 @@ def parse_probe(host: str, stdout: str) -> dict:
     """The probe's lines → a host survey. Any line that is not exactly one of the known shapes, or
     whose fingerprint / id fields fail their pattern, is dropped and counted — never passed on."""
     s = {"host": host, "agents": {}, "keys": {}, "global_keys": set(), "accts": {}, "lists": {},
-         "read": {}, "unverified": {}, "errors": [], "host_errors": [], "multi": set(), "dropped": 0}
+         "read": {}, "unverified": {}, "errors": [], "host_errors": [], "multi": set(), "custom": set(), "dropped": 0}
     for line in stdout.splitlines():
         f = line.split("|")
         t = f[0]
@@ -246,6 +259,8 @@ def parse_probe(host: str, stdout: str) -> dict:
                 s["accts"].setdefault(f[1], set()).add(f[2])
             elif t == "MULTI" and len(f) == 2 and f[1] in s["agents"]:
                 s["multi"].add(f[1])
+            elif t == "CUSTOM" and len(f) == 3 and f[1] in s["agents"] and f[2] in ("openai", CODEX):
+                s["custom"].add((f[1], f[2]))
             elif t == "LIST" and len(f) == 4 and f[1] == "openai" and FP_RE.match(f[2]) and ID_RE.match(f[3]):
                 s["lists"].setdefault(("openai", f[2]), []).append({"id": f[3]})
             elif t == "LIST" and len(f) == 6 and f[1] == CODEX and FP_RE.match(f[2]) and ID_RE.match(f[3]):
@@ -357,6 +372,13 @@ def any_serves(model_id: str, creds: list[tuple[str, str]], accepted: dict) -> s
     return "dead" if all(c in accepted for c in creds) else "unverified"
 
 
+def lacking(model_id: str, creds: list[tuple[str, str]], accepted: dict) -> list[str]:
+    """The credentials whose list was read and does NOT have the id. With "ok" from the rule above,
+    a non-empty answer means only some of the Agent's credentials offer the model: the gateway may
+    pick one that lacks it, and a model-not-found does not fail over (#191 r4 F2)."""
+    return [c[1] for c in creds if c in accepted and model_id not in {e["id"] for e in accepted[c]}]
+
+
 def read_public(url: str) -> tuple[list[str] | None, str]:
     try:
         with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "agentglob-models-check"}),
@@ -448,8 +470,15 @@ def analyse(surveys: list[dict], public: dict, state: dict, curated: list[str]):
                     unverified_refs += 1
                     blocked_by.setdefault(("multi", agent), set()).add(agent)
                     continue
+                if (agent, prov) in s["custom"]:
+                    unverified_refs += 1
+                    blocked_by.setdefault(("custom", f"{agent} {prov}"), set()).add(agent)
+                    continue
+                some = []
                 if prov == CODEX:
                     v = codex_verdict(mid, accts, codex_lists)
+                    if v == "ok":
+                        some = lacking(mid, [(CODEX, a) for a in accts], accepted)
                     if v == "unverified":
                         for a in accts or ["none"]:
                             if a not in codex_lists:
@@ -458,6 +487,8 @@ def analyse(surveys: list[dict], public: dict, state: dict, curated: list[str]):
                     # Same rule as ChatGPT: the gateway may use any of the Agent's OpenAI keys.
                     fps = sorted(s["keys"].get(agent, set()))
                     v = any_serves(mid, [("openai", k) for k in fps], accepted)
+                    if v == "ok":
+                        some = lacking(mid, [("openai", k) for k in fps], accepted)
                     if v == "unverified":
                         for k in fps or [""]:
                             if ("openai", k) not in accepted:
@@ -472,6 +503,11 @@ def analyse(surveys: list[dict], public: dict, state: dict, curated: list[str]):
                 else:
                     continue  # nvidia, anthropic, ...: no list we read
                 checked += 1
+                if some:
+                    issues.append(Issue("P2", s["host"], agent, "Model offered by only some credentials",
+                                        f"{ref} at {path}: {len(some)} of this Agent's {prov} credentials do not "
+                                        f"offer it, and the gateway may use one of them — pick a model all of them "
+                                        f"offer, or remove the credential that lacks it."))
                 if v == "dead":
                     dead += 1
                     pri = "P1" if is_primary(path) else "P2"
@@ -483,6 +519,11 @@ def analyse(surveys: list[dict], public: dict, state: dict, curated: list[str]):
                     unverified_refs += 1
 
     for key, agents in sorted(blocked_by.items()):
+        if key[0] == "custom":
+            issues.append(Issue("P3", "models", key[1].split()[0], "Models on a custom endpoint not checked",
+                                f"{key[1]}: this Agent sends these models to its own baseUrl, so the check never "
+                                f"sends that credential anywhere and does not judge them."))
+            continue
         if key[0] == "multi":
             issues.append(Issue("P3", "models", key[1], "OpenAI/ChatGPT models not checked",
                                 "this Agent defines several agents (agents.list), each with its own credentials; "
