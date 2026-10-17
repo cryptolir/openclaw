@@ -37,7 +37,7 @@ def survey(host="eu", agents=None, keys=None, global_keys=(), accts=None, lists=
             "keys": {a: ({v} if isinstance(v, str) else set(v)) for a, v in (keys or {}).items()},
             "lists": {k: [{"id": i} for i in v] for k, v in lists.items()},
             "read": {k: len(v) for k, v in lists.items()}, "unverified": unverified or {},
-            "errors": [], "host_errors": [], "multi": set(multi), "custom": set(custom), "dropped": 0}
+            "errors": [], "host_errors": [], "multi": set(multi), "custom": set(custom), "notes": [], "dropped": 0}
 
 
 PUBLIC_OK = {"venice": (["kimi-k3", "claude-sonnet-5"], ""), "openrouter": (["openrouter/free"], "")}
@@ -224,6 +224,13 @@ class CuratedOpenAI(unittest.TestCase):
     def test_parse_curated_reads_only_the_openai_block(self):
         self.assertEqual(mc.parse_curated(self.SRC), ["gpt-4o", "o3"])
 
+    def test_191_r5_F3_an_unreadable_curated_list_is_P2_never_silent(self):
+        self.assertIsNone(mc.parse_curated("export const STATIC_MODELS = { openai: STATIC_OPENAI };"))
+        self.assertIsNone(mc.parse_curated(self.SRC.replace('["openai/gpt-4o", "GPT-4o"],', "").replace('["openai/o3", "o3"],', "")))
+        issues, _, _, _ = mc.analyse([survey(global_keys=[K1], lists={("openai", K1): ["gpt-4o"]})], PUBLIC_OK, {}, None)
+        self.assertEqual([(i.pri, i.title) for i in issues], [("P2", "Dashboard OpenAI list not read")])
+        self.assertIsNone(mc.curated_openai_ids("/nonexistent/repo"))
+
     def test_r2_F1_two_hosts_P2_only_when_both_global_keys_lack_it(self):
         eu = survey("eu", global_keys=[K1], lists={("openai", K1): ["gpt-4o"]})
         us = survey("us", global_keys=[K2], lists={("openai", K2): ["gpt-4o", "o3"]})
@@ -297,7 +304,7 @@ OPENAI_URL = "https://api.openai.com/v1/models"
 
 class RealProbe(unittest.TestCase):
     def run_probe(self, profiles_by_agent, answers, global_key="sk-GLOBALKEY-xyz", docker_exit=0,
-                  order=None, agents_list=None, providers=None):
+                  order=None, agents_list=None, providers=None, raw_config=None, exec_json=None, auth_cfg=None):
         tmp = tempfile.mkdtemp()
         agents = os.path.join(tmp, "agents")
         for name, profiles in profiles_by_agent.items():
@@ -307,8 +314,10 @@ class RealProbe(unittest.TestCase):
                 agents_cfg = {"defaults": {"model": {"primary": "openai-codex/gpt-5.5"}}}
                 if agents_list is not None:
                     agents_cfg["list"] = agents_list
-                json.dump({"agents": agents_cfg, "gateway": {"auth": {"token": "GW-TOKEN-must-not-leak"}},
-                           **({"models": {"providers": providers}} if providers else {})}, f)
+                doc = {"agents": agents_cfg, "gateway": {"auth": {"token": "GW-TOKEN-must-not-leak"}},
+                       **({"models": {"providers": providers}} if providers else {}),
+                       **({"auth": auth_cfg} if auth_cfg else {})}
+                f.write(raw_config if raw_config is not None else json.dumps(doc))
             with open(os.path.join(base, "agents/main/agent/auth-profiles.json"), "w") as f:
                 json.dump({"profiles": profiles, **({"order": order} if order is not None else {})}, f)
         env_file = os.path.join(tmp, "global.env")
@@ -317,7 +326,10 @@ class RealProbe(unittest.TestCase):
         stub = os.path.join(tmp, "bin")
         os.makedirs(stub)
         with open(os.path.join(stub, "docker"), "w") as f:
-            f.write("#!/bin/sh\n" + "".join(f"echo {n}-openclaw-gateway-1\n" for n in profiles_by_agent)
+            # `docker exec … node -e` (the JSON5 fallback) prints EXEC_JSON; `docker ps` lists the agents.
+            f.write("#!/bin/sh\n"
+                    + ('if [ "$1" = exec ]; then printf "%s" "$EXEC_JSON"; [ -n "$EXEC_JSON" ]; exit $?; fi\n')
+                    + "".join(f"echo {n}-openclaw-gateway-1\n" for n in profiles_by_agent)
                     + (f"echo daemon down >&2\nexit {docker_exit}\n" if docker_exit else ""))
         os.chmod(os.path.join(stub, "docker"), 0o755)
 
@@ -328,7 +340,7 @@ class RealProbe(unittest.TestCase):
             probe = probe.replace(literal, repl)
         log = os.path.join(tmp, "net.log")
         env = {"PATH": stub + os.pathsep + "/usr/bin:/bin", "FAKE_NET_LOG": log,
-               "FAKE_NET_ANSWERS": json.dumps(answers)}
+               "FAKE_NET_ANSWERS": json.dumps(answers), "EXEC_JSON": json.dumps(exec_json) if exec_json else ""}
         r = subprocess.run([sys.executable, "-c", FAKE_NET], input=probe, capture_output=True, text=True,
                            env=env, timeout=60)
         self.assertEqual(r.returncode, 0, r.stderr)
@@ -432,6 +444,37 @@ class RealProbe(unittest.TestCase):
                                     providers={"openai": {"baseUrl": "https://api.openai.com/v1"}})
         self.assertEqual(mc.parse_probe("eu", out)["custom"], set())
         self.assertIn("sk-REAL", json.dumps(calls))
+
+    def test_191_r5_F1_a_json5_config_is_parsed_by_the_gateways_json5(self):
+        raw = '{ // JSON5: a comment and a trailing comma\n agents: { defaults: { model: { primary: "venice/x", }, }, }, }'
+        parsed = {"agents": {"defaults": {"model": {"primary": "venice/x"}}}}
+        out, _ = self.run_probe({"bot": {}}, {OPENAI_URL: {"data": [{"id": "gpt-4o"}]}},
+                                raw_config=raw, exec_json=parsed)
+        s = mc.parse_probe("eu", out)
+        self.assertEqual(s["agents"], {"bot": [("agents.defaults.model.primary", "venice/x")]})
+        # and with no parse from the container either, it is a CFGERR, not a silent skip
+        out, _ = self.run_probe({"bot": {}}, {OPENAI_URL: {"data": [{"id": "gpt-4o"}]}}, raw_config=raw)
+        self.assertTrue(mc.parse_probe("eu", out)["errors"], out)
+
+    def test_191_r5_F1_include_and_env_refs_are_P3_notes(self):
+        out, _ = self.run_probe({"bot": {}}, {OPENAI_URL: {"data": [{"id": "gpt-4o"}]}},
+                                raw_config=json.dumps({"$include": "./extra.json5", "agents": {}}))
+        s = mc.parse_probe("eu", out)
+        self.assertEqual(s["notes"], [("bot", "INCLUDE")])
+        issues, _, _, _ = mc.analyse([s], PUBLIC_OK, {}, [])
+        self.assertEqual([(i.pri, i.title) for i in issues if i.agent == "bot"], [("P3", "Models not checked")])
+        out, _ = self.run_probe({"bot": {}}, {OPENAI_URL: {"data": [{"id": "gpt-4o"}]}},
+                                agents_list=None, providers=None,
+                                raw_config=json.dumps({"agents": {"defaults": {"model": {"primary": "${MODEL}"}}}}))
+        self.assertEqual(mc.parse_probe("eu", out)["notes"], [("bot", "ENVREF")])
+
+    def test_191_r5_F2_a_profile_whose_configured_mode_disagrees_is_never_used(self):
+        profiles = {"openai:default": {"type": "api_key", "provider": "openai", "key": "sk-STALE-APIKEY"}}
+        out, calls = self.run_probe({"bot": profiles}, {OPENAI_URL: {"data": [{"id": "gpt-4o"}]}},
+                                    auth_cfg={"profiles": {"openai:default": {"provider": "openai", "mode": "oauth"}}})
+        s = mc.parse_probe("eu", out)
+        self.assertNotIn("sk-STALE-APIKEY", json.dumps(calls))
+        self.assertIn("|global", out)  # with no usable profile, the env/global key is the one used
 
     def test_191_r1_F2_docker_ps_failing_reports_a_host_error(self):
         out, _ = self.run_probe({"bot": {}}, {OPENAI_URL: {"data": [{"id": "gpt-4o"}]}}, docker_exit=1)

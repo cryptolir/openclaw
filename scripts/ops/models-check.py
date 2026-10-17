@@ -116,17 +116,51 @@ def ordered(store, cfg, provider):
         order = [pid for pid, p in ((cfg.get("auth") or {}).get("profiles") or {}).items()
                  if isinstance(p, dict) and p.get("provider") == provider]
         order = order or [pid for pid, p in profiles.items() if isinstance(p, dict) and p.get("provider") == provider]
-    return [profiles[pid] for pid in order if isinstance(profiles.get(pid), dict) and profiles[pid].get("provider") == provider]
+    def usable(pid):
+        cred = profiles.get(pid)
+        if not isinstance(cred, dict) or cred.get("provider") != provider:
+            return False
+        conf = ((cfg.get("auth") or {}).get("profiles") or {}).get(pid)
+        if isinstance(conf, dict):
+            # A configured profile must agree on provider and mode (oauth also accepts a stored token).
+            if conf.get("provider") != provider:
+                return False
+            if conf.get("mode") != cred.get("type") and not (conf.get("mode") == "oauth" and cred.get("type") == "token"):
+                return False
+        return True
+    return [profiles[pid] for pid in order if usable(pid)]
+
+JSON5_JS = ("const J=require('/app/node_modules/json5');process.stdout.write(JSON.stringify("
+            "J.parse(require('fs').readFileSync('/home/node/.openclaw/openclaw.json','utf8'))))")
+
+def load_config(a, path):
+    """Plain JSON, else JSON5 (comments, trailing commas) parsed by the gateway's own json5 inside
+    its container, so the probe accepts what the runtime accepts (src/config/io.ts, #191 r5 F1)."""
+    raw = open(path, encoding="utf-8").read()
+    try:
+        return json.loads(raw)
+    except ValueError:
+        pass
+    r = subprocess.run(["docker", "exec", a + "-openclaw-gateway-1", "node", "-e", JSON5_JS],
+                       capture_output=True, text=True, timeout=30)
+    if r.returncode != 0:
+        raise ValueError("json5 parse failed")
+    return json.loads(r.stdout)
 
 for a in sorted(running):
     base = os.path.join(AGENTS, a)
     try:
-        cfg = json.load(open(os.path.join(base, "openclaw.json")))
+        cfg = load_config(a, os.path.join(base, "openclaw.json"))
     except Exception:
         out("CFGERR", a)
         continue
     out("AGENT", a)
     agents_cfg = cfg.get("agents") or {}
+    if '"$include"' in json.dumps(cfg):
+        out("INCLUDE", a)  # the effective config is assembled from other files: not modelled
+        continue
+    if "${" in json.dumps(agents_cfg):
+        out("ENVREF", a)  # a ${VAR} in a model setting resolves only inside the gateway
     for path, ref in collect_model_refs(agents_cfg):  # only refs leave the host (I2)
         if "|" not in ref:
             out("REF", a, path, ref)
@@ -242,7 +276,7 @@ def parse_probe(host: str, stdout: str) -> dict:
     """The probe's lines → a host survey. Any line that is not exactly one of the known shapes, or
     whose fingerprint / id fields fail their pattern, is dropped and counted — never passed on."""
     s = {"host": host, "agents": {}, "keys": {}, "global_keys": set(), "accts": {}, "lists": {},
-         "read": {}, "unverified": {}, "errors": [], "host_errors": [], "multi": set(), "custom": set(), "dropped": 0}
+         "read": {}, "unverified": {}, "errors": [], "host_errors": [], "multi": set(), "custom": set(), "notes": [], "dropped": 0}
     for line in stdout.splitlines():
         f = line.split("|")
         t = f[0]
@@ -259,6 +293,8 @@ def parse_probe(host: str, stdout: str) -> dict:
                 s["accts"].setdefault(f[1], set()).add(f[2])
             elif t == "MULTI" and len(f) == 2 and f[1] in s["agents"]:
                 s["multi"].add(f[1])
+            elif t in ("INCLUDE", "ENVREF") and len(f) == 2 and f[1] in s["agents"]:
+                s["notes"].append((f[1], t))
             elif t == "CUSTOM" and len(f) == 3 and f[1] in s["agents"] and f[2] in ("openai", CODEX):
                 s["custom"].add((f[1], f[2]))
             elif t == "LIST" and len(f) == 4 and f[1] == "openai" and FP_RE.match(f[2]) and ID_RE.match(f[3]):
@@ -391,20 +427,22 @@ def read_public(url: str) -> tuple[list[str] | None, str]:
     return [m["id"] for m in d["data"] if isinstance(m, dict) and isinstance(m.get("id"), str)], ""
 
 
-def parse_curated(src: str) -> list[str]:
-    """The `openai: ( [...] ).map` block of STATIC_MODELS in lib/model-availability.ts → bare ids."""
+def parse_curated(src: str) -> list[str] | None:
+    """The `openai: ( [...] ).map` block of STATIC_MODELS in lib/model-availability.ts → bare ids.
+    None when the block is not found or holds no id: the list could not be read (#191 r5 F3)."""
     m = re.search(r"\n  openai: \(\n(.*?)\n  \)\.map", src, re.S)
-    return re.findall(r'\["openai/([^"]+)"', m.group(1)) if m else []
+    ids = re.findall(r'\["openai/([^"]+)"', m.group(1)) if m else []
+    return ids or None
 
 
-def curated_openai_ids(dash_repo: str) -> list[str]:
-    """STATIC_MODELS.openai ids from the dashboard's origin/main (never a work tree)."""
+def curated_openai_ids(dash_repo: str) -> list[str] | None:
+    """STATIC_MODELS.openai ids from the dashboard's origin/main (never a work tree); None on failure."""
     try:
-        src = subprocess.run(["git", "-C", dash_repo, "show", "origin/main:lib/model-availability.ts"],
-                             capture_output=True, text=True, timeout=30).stdout
+        r = subprocess.run(["git", "-C", dash_repo, "show", "origin/main:lib/model-availability.ts"],
+                           capture_output=True, text=True, timeout=30)
     except Exception:
-        return []
-    return parse_curated(src)
+        return None
+    return parse_curated(r.stdout) if r.returncode == 0 else None
 
 
 class Issue:
@@ -416,7 +454,7 @@ class Issue:
         return "ISSUE|" + "|".join(re.sub(r"[|\r\n]+", " ", x).strip() for x in f)
 
 
-def analyse(surveys: list[dict], public: dict, state: dict, curated: list[str]):
+def analyse(surveys: list[dict], public: dict, state: dict, curated: list[str] | None):
     """→ (issues, report lines, ChatGPT lists to push {acct: entries}, new state)."""
     issues: list[Issue] = []
     new_state = dict(state)
@@ -453,6 +491,11 @@ def analyse(surveys: list[dict], public: dict, state: dict, curated: list[str]):
             issues.append(Issue("P2", s["host"], "-", "Models check could not survey this server", e))
         for e in s["errors"]:
             issues.append(Issue("P3", s["host"], "-", "Models check probe problem", e))
+        for agent, kind in s["notes"]:
+            issues.append(Issue("P3", s["host"], agent, "Models not checked" if kind == "INCLUDE" else "Some model settings not checked",
+                                "its openclaw.json uses $include, so the check does not know its effective models"
+                                if kind == "INCLUDE" else
+                                "a model setting uses ${…}, which only the gateway resolves; that setting is not checked"))
         if s["dropped"]:
             issues.append(Issue("P3", s["host"], "-", "Models check dropped probe lines",
                                 f"{s['dropped']} line(s) did not match a known shape and were discarded (I2)."))
@@ -539,7 +582,12 @@ def analyse(surveys: list[dict], public: dict, state: dict, curated: list[str]):
     eff = sorted({k for s in surveys for k in set().union(*s["keys"].values(), s["global_keys"]) if k})
     eff_lists = [{e["id"] for e in accepted[("openai", k)]} for k in eff if ("openai", k) in accepted]
     all_read = bool(eff) and len(eff_lists) == len(eff)
-    for mid in curated:
+    if curated is None:
+        issues.append(Issue("P2", "models", "-", "Dashboard OpenAI list not read",
+                            "STATIC_MODELS.openai could not be read from the dashboard's origin/main "
+                            "lib/model-availability.ts (git failed, or the list moved or changed shape), so "
+                            "its OpenAI models were not checked — update parse_curated in models-check.py."))
+    for mid in curated or []:
         if any(mid in l for l in eff_lists):
             continue
         if all_read:
