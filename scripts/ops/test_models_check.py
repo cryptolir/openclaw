@@ -9,6 +9,7 @@ source against a temp directory, a stub `docker` and a fake urlopen that records
 import importlib.util
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -204,6 +205,23 @@ class HostErrors(unittest.TestCase):
         issues, _, _, _ = mc.analyse([s], PUBLIC_OK, {}, [])
         self.assertEqual([(i.pri, i.host, i.title) for i in issues],
                          [("P2", "us", "Models check could not survey this server")])
+
+
+class TimeBudget(unittest.TestCase):
+    def test_191_r7_F1_the_worst_case_fits_inside_the_wrapper(self):
+        with open(os.path.join(HERE, "deps-audit-cron.sh"), encoding="utf-8") as f:
+            wrapper = int(re.search(r"timeout (\d+) python3 \"\$MODELS_CHECK\"", f.read()).group(1))
+        # parallel survey (+ the dashboard list) → posting stops at the deadline → files written
+        self.assertLess(max(mc.SURVEY_TIMEOUT_S, 30), mc.POST_DEADLINE_S)
+        self.assertLessEqual(mc.POST_DEADLINE_S + 30, wrapper)  # 30 s: the last POST's own timeout cap
+
+    def test_posting_stops_at_the_deadline(self):
+        push = {f"{i:016x}": [{"id": "m"}] for i in range(120)}
+        saved, mc.DASH_URL = mc.DASH_URL, "http://127.0.0.1:9"  # never the real dashboard
+        try:
+            self.assertIn("out of time after 0 of 120", mc.post_lists(push, "secret", time.monotonic()))
+        finally:
+            mc.DASH_URL = saved
 
 
 class CuratedOpenAI(unittest.TestCase):
@@ -497,6 +515,15 @@ class RealProbe(unittest.TestCase):
         s = mc.parse_probe("eu", out)
         self.assertNotIn("sk-STALE-APIKEY", json.dumps(calls))
         self.assertIn("|global", out)  # with no usable profile, the env/global key is the one used
+
+    def test_191_r7_F2_a_config_env_key_is_used_only_when_docker_env_has_none(self):
+        raw = json.dumps({"agents": {}, "env": {"vars": {"OPENAI_API_KEY": "sk-CONFIG-ENV"}}})
+        out, calls = self.run_probe({"bot": {}}, {OPENAI_URL: {"data": [{"id": "gpt-4o"}]}}, raw_config=raw)
+        self.assertIn("|config", out)
+        sent = json.dumps(calls)
+        self.assertIn("sk-CONFIG-ENV", sent)
+        self.assertNotIn("sk-GLOBALKEY-xyz", sent)  # the config env beats the host global
+        self.assertNotIn("sk-CONFIG-ENV", out)
 
     def test_191_r1_F2_docker_ps_failing_reports_a_host_error(self):
         out, _ = self.run_probe({"bot": {}}, {OPENAI_URL: {"data": [{"id": "gpt-4o"}]}}, docker_exit=1)

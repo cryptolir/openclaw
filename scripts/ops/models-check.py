@@ -32,6 +32,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 import urllib.request
 
 # ponytail: same map as versions-check.py HOSTS; one more host means one more line in both.
@@ -177,6 +178,9 @@ for a in sorted(running):
         host = bu.split("//", 1)[-1].split("/", 1)[0].lower()
         return bool(bu) and host != official
     own = envval(os.path.join(base, "docker.env"), "OPENAI_API_KEY")
+    env_block = cfg.get("env") or {}
+    conf_env = str((env_block.get("vars") or {}).get("OPENAI_API_KEY") or env_block.get("OPENAI_API_KEY") or "").strip()
+    conf_env = "" if conf_env.startswith("${") else conf_env
     cfg_key = str((providers.get("openai") or {}).get("apiKey") or "").strip()
     # The single default agent, `main`: <state>/agents/main/agent (resolveAgentDir).
     try:
@@ -204,8 +208,10 @@ for a in sorted(running):
         cands = []
     elif prof_keys:
         cands = [(k, "profile") for k in prof_keys]
-    elif own or gkey:
-        cands = [(own, "own")] if own else [(gkey, "global")]
+    elif own or conf_env or gkey:
+        # The process env first (docker.env), then the config's env block, which the gateway applies
+        # only to a variable that is still unset (src/config/env-vars.ts), then the host global.
+        cands = [(own, "own")] if own else [(conf_env, "config")] if conf_env else [(gkey, "global")]
     elif cfg_key and not cfg_key.startswith("${"):
         cands = [(cfg_key, "config")]
     else:
@@ -323,7 +329,13 @@ def parse_probe(host: str, stdout: str) -> dict:
     return s
 
 
-def survey_host(host: str, timeout: int = 120) -> dict:
+# The deps-audit wrapper kills this script at 170 s (#191 r7 F1). Hosts and the dashboard list are
+# read in parallel (≤ 90 s); posting stops at POST_DEADLINE_S; the result files are written last.
+SURVEY_TIMEOUT_S = 90
+POST_DEADLINE_S = 140
+
+
+def survey_host(host: str, timeout: int = SURVEY_TIMEOUT_S) -> dict:
     try:
         r = subprocess.run(
             ["ssh", "-i", SSH_KEY, "-o", "ConnectTimeout=15", "-o", "BatchMode=yes",
@@ -611,16 +623,19 @@ def analyse(surveys: list[dict], public: dict, state: dict, curated: list[str] |
     return issues, lines, push, new_state
 
 
-def post_lists(push: dict, secret: str) -> str:
-    """POST in chunks of 50 accounts; '' on success, else the reason."""
+def post_lists(push: dict, secret: str, deadline: float = float("inf")) -> str:
+    """POST in chunks of 50 accounts until `deadline` (time.monotonic()); '' on success, else the reason."""
     accts = sorted(push)
     for i in range(0, len(accts), MAX_PUSH_ACCOUNTS):
+        left = deadline - time.monotonic()
+        if left < 5:
+            return f"out of time after {i} of {len(accts)} account(s)"
         body = {CODEX: {a: push[a] for a in accts[i:i + MAX_PUSH_ACCOUNTS]}}
         req = urllib.request.Request(DASH_URL + "/api/cron/model-lists", data=json.dumps(body).encode(),
                                      headers={"Authorization": "Bearer " + secret, "Content-Type": "application/json"},
                                      method="POST")
         try:
-            with urllib.request.urlopen(req, timeout=30) as r:
+            with urllib.request.urlopen(req, timeout=min(30, left)) as r:
                 if r.status != 200:
                     return f"HTTP {r.status}"
         except Exception as e:
@@ -652,18 +667,21 @@ def main(argv: list[str] | None = None) -> int:
                 state = json.load(f)
         except (OSError, ValueError):
             state = {}  # a broken state file only disables the shrink check for one day
+    started = time.monotonic()
     hosts = [h for h in a.hosts.split(",") if h in HOSTS]
-    with concurrent.futures.ThreadPoolExecutor(max_workers=len(hosts) + 2) as ex:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(hosts) + 3) as ex:
         surveys_f = [ex.submit(survey_host, h) for h in hosts]
         venice_f = ex.submit(read_public, VENICE_URL)
         openrouter_f = ex.submit(read_public, OPENROUTER_URL)
+        curated_f = ex.submit(curated_openai_ids, a.dash_repo)
         surveys = [f.result() for f in surveys_f]
         public = {"venice": venice_f.result(), "openrouter": openrouter_f.result()}
-    issues, lines, push, new_state = analyse(surveys, public, state, curated_openai_ids(a.dash_repo))
+        curated = curated_f.result()
+    issues, lines, push, new_state = analyse(surveys, public, state, curated)
 
     if push and not a.no_post:
         secret = os.environ.get("CRON_SECRET", "")
-        err = post_lists(push, secret) if secret else "CRON_SECRET not set"
+        err = post_lists(push, secret, started + POST_DEADLINE_S) if secret else "CRON_SECRET not set"
         if err:
             issues.append(Issue("P2", "models", "-", "Model lists not delivered to the dashboard",
                                 f"POST /api/cron/model-lists failed ({err}); the picker keeps its last lists."))
