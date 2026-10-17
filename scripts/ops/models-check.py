@@ -100,9 +100,8 @@ gkey = envval("/opt/openclaw/.env", "OPENAI_API_KEY")
 keys = {}            # keyfp -> key   (never printed)
 tokens = {}          # acct  -> access token with > 10 min left (never printed)
 accts_seen = set()
-if gkey:
-    keys[fp(gkey)] = gkey
-    out("GLOBALKEY", fp(gkey))
+# The host's global key is read with only once an Agent on the official endpoint selects it
+# (#191 r6 F1): an Agent behind a custom baseUrl sends it there, never to api.openai.com.
 now_ms = time.time() * 1000
 
 def ordered(store, cfg, provider):
@@ -197,6 +196,9 @@ for a in sorted(running):
             v = ""
         if v and not v.startswith("${"):
             prof_keys.append(v)
+    for prov, official in (("venice", "api.venice.ai"), ("openrouter", "openrouter.ai")):
+        if custom_endpoint(prov, official):
+            out("CUSTOM", a, prov)  # a private service: the public list says nothing about it (#191 r6 F2)
     if custom_endpoint("openai", "api.openai.com"):
         out("CUSTOM", a, "openai")
         cands = []
@@ -209,6 +211,8 @@ for a in sorted(running):
     else:
         cands = []
     for k, src in cands:
+        if src == "global" and fp(k) not in keys:
+            out("GLOBALKEY", fp(k))
         keys[fp(k)] = k
         out("KEY", a, fp(k), src)
     codex_custom = custom_endpoint("openai-codex", "chatgpt.com")
@@ -295,7 +299,7 @@ def parse_probe(host: str, stdout: str) -> dict:
                 s["multi"].add(f[1])
             elif t in ("INCLUDE", "ENVREF") and len(f) == 2 and f[1] in s["agents"]:
                 s["notes"].append((f[1], t))
-            elif t == "CUSTOM" and len(f) == 3 and f[1] in s["agents"] and f[2] in ("openai", CODEX):
+            elif t == "CUSTOM" and len(f) == 3 and f[1] in s["agents"] and f[2] in ("openai", CODEX, "venice", "openrouter"):
                 s["custom"].add((f[1], f[2]))
             elif t == "LIST" and len(f) == 4 and f[1] == "openai" and FP_RE.match(f[2]) and ID_RE.match(f[3]):
                 s["lists"].setdefault(("openai", f[2]), []).append({"id": f[3]})

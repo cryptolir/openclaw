@@ -400,7 +400,8 @@ class RealProbe(unittest.TestCase):
         s = mc.parse_probe("eu", out)
         self.assertEqual(s["dropped"], 0, out)
         self.assertEqual(len(s["keys"]["bot"]), 1)
-        self.assertNotIn(next(iter(s["global_keys"])), s["keys"]["bot"])  # not the env/global key
+        self.assertEqual(s["global_keys"], set())  # the profile won: the global key was never selected
+        self.assertNotIn("sk-GLOBALKEY-xyz", json.dumps(calls))  # ... nor sent
         self.assertIn("|profile", out)
         self.assertNotIn("sk-PROFILE", out)
         self.assertIn("Bearer sk-PROFILE-must-not-leak", json.dumps(calls))  # the list was read with it
@@ -437,6 +438,27 @@ class RealProbe(unittest.TestCase):
         self.assertNotIn("sk-PROXY-KEY", sent)
         self.assertNotIn("PROXY-ACCESS", sent)
         self.assertFalse([c for c in calls if c["url"].startswith(CODEX_URL)])
+
+    def test_191_r6_F1_the_global_key_is_never_sent_for_a_custom_endpoint_agent(self):
+        out, calls = self.run_probe({"bot": {}}, {OPENAI_URL: {"data": [{"id": "gpt-4o"}]}},
+                                    providers={"openai": {"baseUrl": "https://proxy.example/v1"}})
+        self.assertNotIn("sk-GLOBALKEY-xyz", json.dumps(calls))
+        self.assertNotIn("GLOBALKEY|", out)
+        # an Agent on the official endpoint does select (and read with) the global key
+        out, calls = self.run_probe({"bot": {}}, {OPENAI_URL: {"data": [{"id": "gpt-4o"}]}})
+        self.assertIn("sk-GLOBALKEY-xyz", json.dumps(calls))
+        self.assertIn("GLOBALKEY|", out)
+
+    def test_191_r6_F2_custom_venice_and_openrouter_endpoints_are_not_judged(self):
+        out, _ = self.run_probe({"bot": {}}, {OPENAI_URL: {"data": [{"id": "gpt-4o"}]}},
+                                providers={"venice": {"baseUrl": "https://private.example/v1"},
+                                           "openrouter": {"baseUrl": "https://openrouter.ai/api/v1"}})
+        s = mc.parse_probe("eu", out)
+        self.assertEqual(s["custom"], {("bot", "venice")})
+        s["agents"]["bot"] = [("agents.defaults.model.primary", "venice/private-only")]
+        issues, _, _, _ = mc.analyse([s], PUBLIC_OK, {}, [])
+        self.assertEqual([(i.pri, i.title) for i in issues if i.agent == "bot"],
+                         [("P3", "Models on a custom endpoint not checked")])
 
     def test_191_r4_F1_the_official_baseUrl_is_not_custom(self):
         profiles = {"openai:default": {"type": "api_key", "provider": "openai", "key": "sk-REAL"}}
