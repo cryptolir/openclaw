@@ -40,6 +40,9 @@ Some prose.
 | `docker` | Docker Engine | `29.3.0` | every server | apt | download.docker.com | | |
 | `compose` | Docker Compose | `5.1.0` | every server | apt | github | | |
 | `host-security` | Security updates | `0` | every server | apt | — | | |
+| `docling-serve` | Docling Serve | `1.38.1` | the document worker | services/document-worker | github | | |
+| `ocrmypdf` | OCRmyPDF | `17.13.1` | the document worker | services/document-worker | github | | |
+| `caddy` | Caddy | `2.11.7` | the document worker | services/document-worker | github | | |
 
 ## Next section
 """
@@ -289,6 +292,54 @@ class Probe(unittest.TestCase):
         self.assertIn("IMG_PROBE=$(cat <<'PROBE'\ncd /app", vc.HOST_PROBE)
         self.assertIn("\nPROBE\n)", vc.HOST_PROBE)
 
+
+
+class DocumentWorker(unittest.TestCase):
+    """The Document processing worker on the dev server: read from its own containers, compared with its rows."""
+
+    WORKERS = [("docling-serve", "docproc-worker-docling", "1.38.1"), ("ocrmypdf", "docproc-worker", "17.13.1"),
+               ("caddy", "docproc-worker-proxy", "v2.11.7")]
+
+    def dev(self, workers=None):
+        s = survey("dev")
+        s.workers = list(self.WORKERS if workers is None else workers)
+        return s
+
+    def test_probe_reads_worker_lines(self):
+        out = "\n".join(["HOST|docker|29.3.0", "WORKER|docling-serve|docproc-worker-docling|1.38.1",
+                         "WORKER|ocrmypdf|docproc-worker|17.13.1", "WORKER|caddy|docproc-worker-proxy|v2.11.7"])
+        s = vc.parse_probe("dev", out)
+        self.assertEqual(s.workers, self.WORKERS)
+        self.assertIn('[ "$proj" = docproc-worker ]', vc.HOST_PROBE)
+        for k in vc.WORKER_KEYS:
+            self.assertIn(k, vc.KNOWN)
+            self.assertIn(k, vc.LATEST_SOURCES)
+            self.assertIn(k, vc.UPDATE_HOW)
+
+    def test_on_target_is_quiet_and_reported(self):
+        issues, lines = run(surveys=[self.dev()])
+        self.assertFalse([i for i in issues if i.row in vc.WORKER_KEYS])
+        self.assertTrue(any("document worker: docling-serve 1.38.1 · ocrmypdf 17.13.1 · caddy v2.11.7" in l for l in lines))
+
+    def test_behind_the_target_is_p2(self):
+        issues, _ = run(surveys=[self.dev([("docling-serve", "docproc-worker-docling", "1.37.0")] + self.WORKERS[1:])])
+        self.assertIn(("P2", "dev", "Document worker docling-serve older than the Target"), titles(issues))
+
+    def test_a_missing_container_is_p3_only_when_dev_was_read(self):
+        issues, _ = run(surveys=[self.dev(self.WORKERS[:2])])
+        self.assertIn(("P3", "dev", "Document worker caddy not read"), titles(issues))
+        issues, _ = run(surveys=[survey("eu")])  # dev not surveyed: no judgement
+        self.assertFalse([i for i in issues if "Document worker" in i.title])
+        down = survey("dev")
+        down.error = "timed out"
+        issues, _ = run(surveys=[down])
+        self.assertFalse([i for i in issues if "Document worker" in i.title])
+
+    def test_a_newer_upstream_release_is_found(self):
+        latest = {"caddy": vc.Latest("2.12.0"), "docling-serve": vc.Latest("1.38.1")}
+        issues, _ = run(surveys=[self.dev()], latest=latest)
+        self.assertIn(("P2", "versions", "caddy update available"), titles(issues))
+        self.assertFalse([i for i in issues if i.row == "docling-serve" and i.host == "versions"])
 
 
 class WeeklyLookups(unittest.TestCase):
