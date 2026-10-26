@@ -40,6 +40,11 @@ services:
       # the skill at all.
       GCAL_RUNTIME_URL: ${GCAL_RUNTIME_URL:-}
       GCAL_RUNTIME_TOKEN: ${GCAL_RUNTIME_TOKEN:-}
+      # Document processing (dashboard Tools -> Capabilities). Per-agent key for the
+      # dashboard's document runtime routes; revoked the instant the row is turned off.
+      # Same allowlist rule: a per-agent docker.env key reaches the container ONLY if listed.
+      DOCPROC_RUNTIME_URL: ${DOCPROC_RUNTIME_URL:-}
+      DOCPROC_RUNTIME_TOKEN: ${DOCPROC_RUNTIME_TOKEN:-}
       # here.now publishing/Drive key (dashboard Tools -> Core API Keys).
       # Same allowlist rule as the GMAIL_*/GCAL_* keys above: with no env_file,
       # a per-agent docker.env key reaches the container ONLY if listed here.
@@ -186,6 +191,11 @@ services:
       # the skill at all.
       GCAL_RUNTIME_URL: ${GCAL_RUNTIME_URL:-}
       GCAL_RUNTIME_TOKEN: ${GCAL_RUNTIME_TOKEN:-}
+      # Document processing (dashboard Tools -> Capabilities). Per-agent key for the
+      # dashboard's document runtime routes; revoked the instant the row is turned off.
+      # Same allowlist rule: a per-agent docker.env key reaches the container ONLY if listed.
+      DOCPROC_RUNTIME_URL: ${DOCPROC_RUNTIME_URL:-}
+      DOCPROC_RUNTIME_TOKEN: ${DOCPROC_RUNTIME_TOKEN:-}
       # here.now publishing/Drive key (dashboard Tools -> Core API Keys).
       # Same allowlist rule as the GMAIL_*/GCAL_* keys above: with no env_file,
       # a per-agent docker.env key reaches the container ONLY if listed here.
