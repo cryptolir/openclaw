@@ -12,7 +12,8 @@ to the 06:00 diagnostic: a report for the email and ISSUE|… lines for the AUTO
 bug_list.md. The human decision happens there: update, roll or promote, or hold the row (Hold until
 + Note), which drops its findings to P3 until that date.
 
-Read-only everywhere: `docker ps`, `docker exec <version command>`, `apt-get -s` (a simulation), and
+Read-only everywhere: `docker ps`, `docker exec <version command>` (gateways, sidecars and the document
+worker's three containers), `apt-get -s` (a simulation), and
 one `docker run --rm --network none` of the stable image on the dev server.
 
     versions-check.py --doc DEPENDENCIES.md --report R --issues I [--latest-cache C] [--hosts eu,us,dev,team1] [--no-latest]
@@ -41,7 +42,11 @@ SSH_KEY = os.environ.get("SSH_KEY", os.path.expanduser("~/.ssh/hetzner-openclaw"
 IMAGE_KEYS = ("openclaw", "node", "playwright", "chrome", "python")
 # Every row this script knows how to check. A doc row outside this set is reported, and so is a
 # missing one: a component must never drop out of the check silently.
-KNOWN = ("gateway-image", *IMAGE_KEYS, "hermes", "sidecar-chromium", "docker", "compose", "host-security")
+# The Document processing worker on the dev server (dashboard services/document-worker, compose project
+# docproc-worker): each read from its own running container.
+WORKER_KEYS = ("docling-serve", "ocrmypdf", "caddy")
+WORKER_HOST = "dev"
+KNOWN = ("gateway-image", *IMAGE_KEYS, "hermes", "sidecar-chromium", "docker", "compose", "host-security", *WORKER_KEYS)
 
 # Runs inside a gateway container (docker exec) or the stable image (docker run). No quotes survive
 # to the caller: each value is `key=<command output>;`.
@@ -68,7 +73,7 @@ IMG_PROBE=$(cat <<'PROBE'
 """ + IMAGE_PROBE + r"""PROBE
 )
 seen=" "
-docker ps --format '{{.Names}}|{{.Image}}|{{.Label "com.docker.compose.service"}}|{{.Label "agentglob.sidecar-of"}}' | sort | while IFS='|' read -r n img svc side; do
+docker ps --format '{{.Names}}|{{.Image}}|{{.Label "com.docker.compose.service"}}|{{.Label "agentglob.sidecar-of"}}|{{.Label "com.docker.compose.project"}}' | sort | while IFS='|' read -r n img svc side proj; do
   if [ "$svc" = openclaw-gateway ]; then
     echo "AGENT|openclaw|$n|$img|"
     case "$seen" in *" $img "*) ;; *) seen="$seen$img "; echo "IMAGE|$img|$(docker exec "$n" sh -c "$IMG_PROBE" 2>/dev/null | tr -d '\n|')";; esac
@@ -76,6 +81,12 @@ docker ps --format '{{.Names}}|{{.Image}}|{{.Label "com.docker.compose.service"}
     echo "AGENT|hermes|$n|$img|$(docker exec "$n" hermes --version 2>/dev/null | head -1 | tr -d '|')"
   elif [ -n "$side" ]; then
     echo "AGENT|sidecar|$n|$img|$(docker exec "$n" chromium --version 2>/dev/null | head -1 | tr -d '|')"
+  elif [ "$proj" = docproc-worker ]; then
+    case "$svc" in
+      docling) echo "WORKER|docling-serve|$n|$(docker exec "$n" python -c "import importlib.metadata as m; print(m.version('docling-serve'))" 2>/dev/null | head -1 | tr -d '|')";;
+      worker)  echo "WORKER|ocrmypdf|$n|$(docker exec "$n" ocrmypdf --version 2>/dev/null | head -1 | tr -d '|')";;
+      proxy)   echo "WORKER|caddy|$n|$(docker exec "$n" caddy version 2>/dev/null | head -1 | cut -d' ' -f1 | tr -d '|')";;
+    esac
   fi
 done
 """
@@ -205,6 +216,7 @@ class Survey:
     facts: dict[str, str] = dataclasses.field(default_factory=dict)
     agents: list[tuple[str, str, str, str]] = dataclasses.field(default_factory=list)  # kind, name, image, version
     images: dict[str, dict[str, str]] = dataclasses.field(default_factory=dict)       # image ref -> component -> version
+    workers: list[tuple[str, str, str]] = dataclasses.field(default_factory=list)     # component, container, version
     error: str = ""
 
 
@@ -228,6 +240,8 @@ def parse_probe(host: str, stdout: str) -> Survey:
             s.agents.append((f[1], f[2], f[3], f[4].strip()))
         elif f[0] == "IMAGE" and len(f) >= 3:
             s.images[f[1]] = parse_kv(f[2])
+        elif f[0] == "WORKER" and len(f) >= 4:
+            s.workers.append((f[1], f[2], f[3].strip()))
     if not s.facts and not s.agents:
         s.error = "no answer"
     return s
@@ -339,6 +353,9 @@ def fetch_latest(pins: dict[str, Pin], only: list[str] | None = None) -> dict[st
         "sidecar-chromium": latest_chrome,
         "docker": latest_docker,
         "compose": lambda: latest_github("docker/compose"),
+        "docling-serve": lambda: latest_github("docling-project/docling-serve"),
+        "ocrmypdf": lambda: latest_github("ocrmypdf/OCRmyPDF"),
+        "caddy": lambda: latest_github("caddyserver/caddy"),
     }
     if only is not None:
         jobs = {k: f for k, f in jobs.items() if k in only}
@@ -356,7 +373,7 @@ def fetch_latest(pins: dict[str, Pin], only: list[str] | None = None) -> dict[st
 
 
 LATEST_SOURCES = ("gateway-image", "openclaw", "node", "playwright", "chrome", "hermes", "sidecar-chromium",
-                  "docker", "compose")
+                  "docker", "compose", *WORKER_KEYS)
 
 
 def resolve_latest(pins: dict[str, Pin], cache: dict, today: datetime.date,
@@ -423,6 +440,8 @@ UPDATE_HOW = {
     "sidecar-chromium": "rebuild the sidecar image (it takes Debian's current Chromium), then re-run the Agent's provisioning",
     "docker": _HOST_HOW,
     "compose": _HOST_HOW,
+    **{k: ("update the image digest in the dashboard's services/document-worker, rebuild and restart the worker on "
+           "DevAgents when no job is running, re-run its integration tests, then raise the Target") for k in WORKER_KEYS},
 }
 
 
@@ -481,6 +500,10 @@ def analyse(pins: dict[str, Pin], surveys: list[Survey], stable: tuple[str, dict
             if old:
                 add(Issue("P2", s.host, f"{len(old)} agents", f"Older {label} than the Target",
                           f"Target {target(pid)}. Behind: {names(old)}. Decide: rebuild and restart them, or {HOLD_HOW}.", pid))
+        for comp, name, ver in s.workers:
+            if target(comp) and cmp(ver, target(comp)) == -1:
+                add(Issue("P2", s.host, "-", f"Document worker {comp} older than the Target",
+                          f"{name} runs {clean(ver) or ver}, Target {target(comp)}. Decide: {UPDATE_HOW[comp]}, or {HOLD_HOW}.", comp))
         for pid, key in (("docker", "docker"), ("compose", "compose")):
             have = s.facts.get(key, "")
             if target(pid) and have and cmp(have, target(pid)) == -1:
@@ -500,6 +523,17 @@ def analyse(pins: dict[str, Pin], surveys: list[Survey], stable: tuple[str, dict
             add(Issue("P3", s.host, "-", "Reboot pending",
                       f"{s.host} has installed updates that need a reboot (/var/run/reboot-required). Every Agent there "
                       "restarts with it. Decide when, or " + HOLD_HOW + ".", "host-security"))
+
+    # 1b. A worker row whose container was not found on the dev server (read without error): the worker is
+    # down or was removed. Only judged when the dev server was surveyed.
+    dev = next((s for s in surveys if s.host == WORKER_HOST and not s.error), None)
+    if dev is not None:
+        seen = {comp for comp, _n, ver in dev.workers if clean(ver)}
+        for comp in WORKER_KEYS:
+            if comp in pins and comp not in seen:
+                add(Issue("P3", WORKER_HOST, "-", f"Document worker {comp} not read",
+                          f"No running {comp} container of the document worker (compose project docproc-worker) answered on "
+                          f"{WORKER_HOST}. If Document processing is in use, the worker is down: check it on DevAgents.", comp))
 
     # 2. The stable image against the Targets of the image rows (keeps this doc true).
     if stable is not None and gw:
@@ -606,6 +640,8 @@ def report(pins, surveys, stable, latest, issues, today) -> list[str]:
             f = s.facts
             out.append(f"  {s.host}: docker {f.get('docker', '?')} · compose {f.get('compose', '?')} · {f.get('os', '?')}"
                        f" · {f.get('security_updates', '?')} security update(s) · reboot {'pending' if f.get('reboot_required') == 'yes' else 'no'}")
+            if s.workers:
+                out.append(f"    document worker: " + " · ".join(f"{c} {clean(v) or '?'}" for c, _n, v in s.workers))
     return out
 
 
