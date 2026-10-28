@@ -362,9 +362,22 @@ done
 if ! grep -q "empty.env:/home/node/.openclaw/docker.env:ro" /opt/openclaw/docker-compose.yml 2>/dev/null; then
   em "ISSUE|P1|$H|host|Compose file lost the secrets shadow line|/opt/openclaw/docker-compose.yml no longer mounts empty.env over docker.env. Every agent recreated from it will see its real secrets. Reconcile /opt/openclaw to the repo compose (which carries the line for both services)."
 fi
-if [ -s /opt/openclaw/empty.env ] 2>/dev/null; then
-  em "ISSUE|P1|$H|host|Shadow source file is NOT empty|/opt/openclaw/empty.env has content; every container mounts it AS its secrets file, so its content is fleet-visible. Truncate it: : > /opt/openclaw/empty.env"
+# >>> shadow-source (OB-43): the mount source must be a regular, zero-byte, non-symlink file.
+# Missing = the next hand recreate makes docker create a DIRECTORY there and the container dies
+# at start. -L first: -d/-f/-s follow symlinks. SHADOW_SRC exists for the test only.
+_shadow="${SHADOW_SRC:-/opt/openclaw/empty.env}"
+if [ -L "$_shadow" ]; then
+  em "ISSUE|P1|$H|host|Shadow source is a symlink|$_shadow is a symlink; compose would mount whatever it points at as every agent's secrets file, and a repair could write through it. Replace it: rm $_shadow && install -m 444 /dev/null $_shadow"
+elif [ -d "$_shadow" ]; then
+  em "ISSUE|P1|$H|host|Shadow source is a DIRECTORY|$_shadow is a directory (docker creates one when the file is missing). Every container recreated now dies at start with 'not a directory'. Fix: rmdir $_shadow && install -m 444 /dev/null $_shadow"
+elif [ ! -e "$_shadow" ]; then
+  em "ISSUE|P1|$H|host|Shadow source file is MISSING|$_shadow does not exist. A dashboard deploy recreates it (dashboard#386) and deploy.sh refuses, but any other compose up makes docker create a directory there and the container dies at start. Fix: install -m 444 /dev/null $_shadow"
+elif [ ! -f "$_shadow" ]; then
+  em "ISSUE|P1|$H|host|Shadow source is not a regular file|$_shadow exists but is not a regular file. Replace it: rm $_shadow && install -m 444 /dev/null $_shadow"
+elif [ -s "$_shadow" ]; then
+  em "ISSUE|P1|$H|host|Shadow source file is NOT empty|$_shadow has content; every container mounts it AS its secrets file, so its content is fleet-visible. Truncate it: : > $_shadow"
 fi
+# <<< shadow-source
 
 # ── D3. GLOBAL HOST — Core APIs + file mode ──────────────────────────────────
 # /opt/openclaw/.env is the Global Host: the dashboard seeds every new Agent's

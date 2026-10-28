@@ -75,4 +75,5 @@ jobs:
       - name: Run the ops script tests
         run: |
           python3 scripts/ops/test_env_source_check.py
+          python3 scripts/ops/test_shadow_source_check.py
           python3 scripts/ops/test_no_pipe_into_grep_q.py
