@@ -1,0 +1,107 @@
+{
+  "_comment": "Shared by lib/codex-model-lists.test.ts (dashboard) and scripts/ops/test_models_check.py (openclaw). Keep both copies byte-identical. Plan: docs/plans/active/model-catalog-check.md I5, I8.",
+  "config": {
+    "agents": {
+      "defaults": {
+        "model": {
+          "primary": "openai-codex/gpt-5.5",
+          "fallbacks": ["openrouter/openrouter/free", "venice/claude-sonnet-5"]
+        },
+        "heartbeat": { "model": "venice/kimi-k3", "every": "30m" },
+        "subagents": { "model": "openai-codex/gpt-6-luna" },
+        "imageModel": { "primary": "openai/gpt-4o", "fallbacks": ["venice/qwen-vl"] },
+        "workspace": "/home/node/.openclaw/workspace",
+        "models": { "venice/kimi-k3": { "alias": "kimi" } }
+      },
+      "list": [
+        { "id": "main", "model": "nvidia/llama-4" },
+        {
+          "id": "helper",
+          "model": { "primary": "openai-codex/gpt-5.6-sol", "fallbacks": ["venice/kimi-k3"] }
+        },
+        { "id": "bare", "model": "gpt-5" }
+      ]
+    },
+    "channels": { "telegram": { "model": "venice/not-under-agents" } }
+  },
+  "refs": [
+    "nvidia/llama-4",
+    "openai-codex/gpt-5.5",
+    "openai-codex/gpt-5.6-sol",
+    "openai-codex/gpt-6-luna",
+    "openai/gpt-4o",
+    "openrouter/openrouter/free",
+    "venice/claude-sonnet-5",
+    "venice/kimi-k3",
+    "venice/qwen-vl"
+  ],
+  "verdicts": [
+    {
+      "name": "one account, fresh, serves it",
+      "id": "x",
+      "accts": ["a"],
+      "lists": { "a": { "models": ["x"], "ageHours": 1 } },
+      "expect": "ok"
+    },
+    {
+      "name": "one account, fresh, lacks it",
+      "id": "x",
+      "accts": ["a"],
+      "lists": { "a": { "models": ["y"], "ageHours": 1 } },
+      "expect": "dead"
+    },
+    {
+      "name": "one account, stale, lacks it",
+      "id": "x",
+      "accts": ["a"],
+      "lists": { "a": { "models": ["y"], "ageHours": 73 } },
+      "expect": "unverified"
+    },
+    {
+      "name": "one account, stale, serves it",
+      "id": "x",
+      "accts": ["a"],
+      "lists": { "a": { "models": ["x"], "ageHours": 500 } },
+      "expect": "ok"
+    },
+    {
+      "name": "one account, never seen",
+      "id": "x",
+      "accts": ["a"],
+      "lists": {},
+      "expect": "unverified"
+    },
+    { "name": "no login", "id": "x", "accts": [], "lists": {}, "expect": "unverified" },
+    {
+      "name": "two accounts, only A serves it",
+      "id": "x",
+      "accts": ["a", "b"],
+      "lists": { "a": { "models": ["x"], "ageHours": 1 }, "b": { "models": ["y"], "ageHours": 1 } },
+      "expect": "ok"
+    },
+    {
+      "name": "two accounts, both fresh, neither serves it",
+      "id": "x",
+      "accts": ["a", "b"],
+      "lists": { "a": { "models": ["y"], "ageHours": 1 }, "b": { "models": ["y"], "ageHours": 1 } },
+      "expect": "dead"
+    },
+    {
+      "name": "two accounts, B stale, neither serves it",
+      "id": "x",
+      "accts": ["a", "b"],
+      "lists": {
+        "a": { "models": ["y"], "ageHours": 1 },
+        "b": { "models": ["y"], "ageHours": 80 }
+      },
+      "expect": "unverified"
+    },
+    {
+      "name": "two accounts, B never seen, A lacks it",
+      "id": "x",
+      "accts": ["a", "b"],
+      "lists": { "a": { "models": ["y"], "ageHours": 1 } },
+      "expect": "unverified"
+    }
+  ]
+}
