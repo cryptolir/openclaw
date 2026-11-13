@@ -43,6 +43,7 @@ Some prose.
 | `docling-serve` | Docling Serve | `1.38.1` | the document worker | services/document-worker | github | | |
 | `ocrmypdf` | OCRmyPDF | `17.13.1` | the document worker | services/document-worker | github | | |
 | `caddy` | Caddy | `2.11.7` | the document worker | services/document-worker | github | | |
+| `linkedin-api` | LinkedIn API version | `202609` | the code on main | linkedin.py, li-page-token.py | — | | |
 
 ## Next section
 """
@@ -61,8 +62,12 @@ def survey(host="eu", agents=(), facts=None, images=None):
     return s
 
 
-def run(pins=None, surveys=(), stable=("x", STABLE_OK), latest=None, today=TODAY):
-    return vc.analyse(pins if pins is not None else vc.parse_pins(DOC), list(surveys), stable, latest or {}, today)
+CODE_OK = {f: "202609" for f in vc.LI_PINS}
+
+
+def run(pins=None, surveys=(), stable=("x", STABLE_OK), latest=None, today=TODAY, code_pins=CODE_OK):
+    return vc.analyse(pins if pins is not None else vc.parse_pins(DOC), list(surveys), stable, latest or {}, today,
+                      code_pins)
 
 
 def titles(issues):
@@ -449,6 +454,127 @@ class PhaseC(unittest.TestCase):
         issues, _ = self.run_block(0, doc="")
         self.assertIn("Version check failed", issues)
         self.assertNotIn("fresh finding", issues)
+
+
+class LinkedIn(unittest.TestCase):
+    """The LinkedIn API version row, and each Agent's LinkedIn key (dashboard social-bob-linkedin-page-api.md)."""
+
+    def ts(self, day):
+        return int(datetime.datetime.combine(day, datetime.time(12), datetime.timezone.utc).timestamp())
+
+    def key_run(self, ends_in=None, checked=1000, written=500, host="dev"):
+        s = survey(host)
+        ends = self.ts(TODAY + datetime.timedelta(days=ends_in)) if ends_in is not None else 0
+        s.keys = [("social-bob", ends, checked, written)]
+        return run(surveys=[s])
+
+    def test_the_probe_lists_a_key_and_never_its_value(self):
+        s = vc.parse_probe("dev", "HOST|docker|29.3.0\nKEY|linkedin|social-bob|1799756762|1794573961|1794576362\n"
+                                  "KEY|linkedin|odd|x|y|z\nKEY|other|a|1|2|3")
+        self.assertEqual(s.keys, [("social-bob", 1799756762, 1794573961, 1794576362), ("odd", 0, 0, 0)])
+        p = vc.HOST_PROBE
+        loop = p[p.index("for t in /root/.openclaw/agents/"):]
+        self.assertIn("li-page/token", loop)
+        self.assertNotRegex(loop, r"\bcat\b|read\(\)|open\(\"\$t|<\s*\"\$t\"", "the key file is only stat'ed, never read")
+        self.assertIn('stat -c %Y "$t"', loop)
+
+    def test_the_probe_reads_the_stored_end_date(self):
+        p = vc.HOST_PROBE
+        loop = p[p.index("for t in /root/.openclaw/agents/"):]
+        with tempfile.TemporaryDirectory() as d:
+            os.makedirs(os.path.join(d, "agents", "bob", "li-page"))
+            os.makedirs(os.path.join(d, "browser-check", "bob"))
+            with open(os.path.join(d, "agents", "bob", "li-page", "token"), "w") as f:
+                f.write("SECRETTOKENVALUE")
+            with open(os.path.join(d, "browser-check", "bob", "state.json"), "w") as f:
+                f.write('{"li_key": {"ends": 1799756762.0, "at": 1794573961.3}}')
+            os.makedirs(os.path.join(d, "agents", "nokey"))
+            r = subprocess.run(["bash", "-c", loop.replace("/root/.openclaw", d)], capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        line, = r.stdout.splitlines()
+        self.assertRegex(line, r"^KEY\|linkedin\|bob\|1799756762\|1794573961\|\d+$")
+        self.assertNotIn("SECRET", r.stdout + r.stderr)
+
+    def test_a_key_far_from_its_end_is_quiet_and_reported(self):
+        issues, report = self.key_run(ends_in=60)
+        self.assertEqual([i for i in issues if "LinkedIn" in i.title], [])
+        self.assertIn("  dev social-bob: LinkedIn key ends 2026-11-29 (60 days)", report)
+
+    def test_a_key_under_14_days_is_p2_and_names_the_fix(self):
+        for days, want in ((14, None), (13, "P2"), (1, "P2"), (0, "P1"), (-3, "P1")):
+            with self.subTest(days=days):
+                got = [(i.pri, i.title, i.detail) for i in self.key_run(ends_in=days)[0] if "LinkedIn key" in i.title]
+                if want is None:
+                    self.assertEqual(got, [])
+                else:
+                    (pri, title, detail), = got
+                    self.assertEqual(pri, want)
+                    self.assertIn("li-page-token.py", detail)
+                    self.assertIn("social-bob", detail)
+
+    def test_a_new_key_waits_for_its_check_and_no_end_date_is_said(self):
+        issues, report = self.key_run(ends_in=-30, checked=1000, written=2000)
+        self.assertEqual([i for i in issues if "LinkedIn key" in i.title], [], "an old date for a renewed key")
+        self.assertIn("  dev social-bob: new LinkedIn key, checked at the next 07:30 UTC key check", report)
+        issues, report = self.key_run(ends_in=None)
+        self.assertIn(("P3", "dev", "LinkedIn key end date not read"), titles(issues))
+        self.assertIn("  dev social-bob: LinkedIn key end date not read yet", report)
+
+    def test_the_api_version_retires_about_a_year_after_its_month(self):
+        self.assertEqual(vc.li_retires("202609"), datetime.date(2027, 9, 15))
+        self.assertEqual(vc.li_retires("202510"), datetime.date(2026, 10, 15))
+        for bad in ("2026-09", "202613", "v202609", ""):
+            self.assertIsNone(vc.li_retires(bad))
+        _, report = run()
+        self.assertIn("  API version 202609: retires about 2027-09-15", report)
+        self.assertRegex("\n".join(report), r"\nlinkedin-api\s+202609\s+-\s+-\s+-\s+ok")
+
+    def test_the_api_version_is_flagged_90_days_before_and_held_like_any_row(self):
+        for today, want in ((datetime.date(2027, 6, 16), None), (datetime.date(2027, 6, 17), "P2"),
+                            (datetime.date(2027, 9, 14), "P2"), (datetime.date(2027, 9, 15), "P1")):
+            with self.subTest(today=today):
+                got = [i.pri for i in run(today=today)[0] if i.row == "linkedin-api"]
+                self.assertEqual(got, [want] if want else [])
+        pins = vc.parse_pins(DOC)
+        pins["linkedin-api"].hold, pins["linkedin-api"].note = "2027-08-01", "moving in August"
+        (i,) = [i for i in run(pins=pins, today=datetime.date(2027, 7, 1))[0] if i.row == "linkedin-api"]
+        self.assertEqual(i.pri, "P3")
+        self.assertIn("moving in August", i.detail)
+
+    def test_the_row_is_compared_with_the_code(self):
+        path = "scripts/ops/li-page-token.py"
+        t = titles(run(code_pins={**CODE_OK, path: "202610"})[0])
+        self.assertIn(("P3", "versions", "DEPENDENCIES.md linkedin-api Target differs from the code"), t)
+        t = titles(run(code_pins=None)[0])
+        self.assertIn(("P3", "versions", "linkedin-api not compared with the code"), t)
+        pins = vc.parse_pins(DOC)
+        pins["linkedin-api"].target = "2026-09"
+        self.assertIn(("P3", "versions", "linkedin-api Target is not a LinkedIn version"), titles(run(pins=pins)[0]))
+
+    def test_the_code_pins_are_read_from_the_dashboards_main(self):
+        with tempfile.TemporaryDirectory() as d:
+            def git(*a):
+                subprocess.run(["git", "-C", d, *a], check=True, capture_output=True)
+            git("init", "-q", "-b", "main")
+            for path, line in (("assets/skills/facebook-page/scripts/linkedin.py", 'VERSION = "202609"'),
+                               ("scripts/ops/li-page-token.py", 'x = 1\nLI_VERSION = "202610"')):
+                os.makedirs(os.path.join(d, os.path.dirname(path)), exist_ok=True)
+                with open(os.path.join(d, path), "w") as f:
+                    f.write(line + "\n")
+            git("add", "-A")
+            git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "x")
+            git("update-ref", "refs/remotes/origin/main", "HEAD")
+            got = vc.read_code_pins(d)
+        self.assertEqual(got, {"assets/skills/facebook-page/scripts/linkedin.py": "202609",
+                               "scripts/ops/li-page-token.py": "202610"})
+        self.assertIsNone(vc.read_code_pins(""))
+        self.assertIsNone(vc.read_code_pins("/nonexistent"))
+
+    def test_the_audit_passes_the_dashboard_checkout(self):
+        with open(os.path.join(HERE, "deps-audit-cron.sh"), encoding="utf-8") as f:
+            src = f.read()
+        block = src[src.index("# ── Phase C — versions"):src.index("# ── Emit + state files")]
+        self.assertIn('--dash-repo "${DASH_REPO:-}"', block)
 
 
 if __name__ == "__main__":

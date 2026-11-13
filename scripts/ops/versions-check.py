@@ -16,7 +16,15 @@ Read-only everywhere: `docker ps`, `docker exec <version command>` (gateways, si
 worker's three containers), `apt-get -s` (a simulation), and
 one `docker run --rm --network none` of the stable image on the dev server.
 
-    versions-check.py --doc DEPENDENCIES.md --report R --issues I [--latest-cache C] [--hosts eu,us,dev,team1] [--no-latest]
+Two rows are about LinkedIn, Bob's company-page posts (dashboard plan social-bob-linkedin-page-api.md):
+- `linkedin-api`: the LinkedIn-Version the code sends. Compared with the code on the dashboard's main
+  (--dash-repo), and flagged as the version's retirement nears: LinkedIn retires a version about a
+  year after its month.
+- Each Agent's LinkedIn key (not a row: a key has no version): its end date, as the dashboard's daily
+  LinkedIn key check (browser-check.py, 07:30 UTC) last read it from LinkedIn. Flagged under 14 days.
+
+    versions-check.py --doc DEPENDENCIES.md --report R --issues I [--latest-cache C] [--hosts eu,us,dev,team1]
+                      [--no-latest] [--dash-repo PATH]
 """
 
 from __future__ import annotations
@@ -46,7 +54,14 @@ IMAGE_KEYS = ("openclaw", "node", "playwright", "chrome", "python")
 # docproc-worker): each read from its own running container.
 WORKER_KEYS = ("docling-serve", "ocrmypdf", "caddy")
 WORKER_HOST = "dev"
-KNOWN = ("gateway-image", *IMAGE_KEYS, "hermes", "sidecar-chromium", "docker", "compose", "host-security", *WORKER_KEYS)
+KNOWN = ("gateway-image", *IMAGE_KEYS, "hermes", "sidecar-chromium", "docker", "compose", "host-security", *WORKER_KEYS,
+         "linkedin-api")
+
+# LinkedIn (dashboard repo): where the code pins its API version, and how the key is judged.
+LI_PINS = {"assets/skills/facebook-page/scripts/linkedin.py": r'^VERSION = "(\d{6})"',
+           "scripts/ops/li-page-token.py": r'^LI_VERSION = "(\d{6})"'}
+LI_API_WARN_DAYS = 90   # a LinkedIn API version is flagged this long before it retires
+LI_KEY_WARN_DAYS = 14   # a LinkedIn key is flagged this long before it ends (the key check warns then too)
 
 # Runs inside a gateway container (docker exec) or the stable image (docker run). No quotes survive
 # to the caller: each value is `key=<command output>;`.
@@ -88,6 +103,19 @@ docker ps --format '{{.Names}}|{{.Image}}|{{.Label "com.docker.compose.service"}
       proxy)   echo "WORKER|caddy|$n|$(docker exec "$n" caddy version 2>/dev/null | head -1 | cut -d' ' -f1 | tr -d '|')";;
     esac
   fi
+done
+# Each Agent with a LinkedIn key: when it ends, as the dashboard's 07:30 key check last read it from
+# LinkedIn (0 = not read yet), when that check last ran, and when the key file was written (a key
+# installed since then has not been checked). Never the key itself.
+for t in /root/.openclaw/agents/*/li-page/token; do
+  [ -f "$t" ] || continue
+  a=$(basename "$(dirname "$(dirname "$t")")")
+  echo "KEY|linkedin|$a|$(python3 -I -c 'import json, sys
+try:
+    k = json.load(open(sys.argv[1])).get("li_key") or {}
+    print(int(k.get("ends") or 0), int(k.get("at") or 0), sep="|")
+except Exception:
+    print("0|0")' "/root/.openclaw/browser-check/$a/state.json" 2>/dev/null)|$(stat -c %Y "$t" 2>/dev/null)"
 done
 """
 
@@ -217,6 +245,7 @@ class Survey:
     agents: list[tuple[str, str, str, str]] = dataclasses.field(default_factory=list)  # kind, name, image, version
     images: dict[str, dict[str, str]] = dataclasses.field(default_factory=dict)       # image ref -> component -> version
     workers: list[tuple[str, str, str]] = dataclasses.field(default_factory=list)     # component, container, version
+    keys: list[tuple[str, int, int, int]] = dataclasses.field(default_factory=list)   # agent, ends, checked, written (epoch s)
     error: str = ""
 
 
@@ -242,6 +271,8 @@ def parse_probe(host: str, stdout: str) -> Survey:
             s.images[f[1]] = parse_kv(f[2])
         elif f[0] == "WORKER" and len(f) >= 4:
             s.workers.append((f[1], f[2], f[3].strip()))
+        elif f[0] == "KEY" and len(f) >= 6 and f[1] == "linkedin":
+            s.keys.append((f[2], *(int(x) if x.strip().isdigit() else 0 for x in f[3:6])))
     if not s.facts and not s.agents:
         s.error = "no answer"
     return s
@@ -458,8 +489,90 @@ def names(xs: list[str], limit: int = 8) -> str:
     return ", ".join(short[:limit]) + (f" and {len(short) - limit} more" if len(short) > limit else "")
 
 
+def li_retires(version: str) -> datetime.date | None:
+    """'202609' -> about 2027-09-15: LinkedIn retires a version about a year after its month (202510 ended
+    2026-10-15). None when it is not a YYYYMM version."""
+    if not re.fullmatch(r"\d{4}(0[1-9]|1[0-2])", version or ""):
+        return None
+    return datetime.date(int(version[:4]) + 1, int(version[4:]), 15)
+
+
+LI_API_HOW = ("move `VERSION` in assets/skills/facebook-page/scripts/linkedin.py and `LI_VERSION` in "
+              "scripts/ops/li-page-token.py (dashboard) to a newer month together, seal and approve one LinkedIn "
+              "post to see it still works, then raise the Target")
+
+
+def linkedin_api(target: str, code_pins: dict[str, str] | None, today: datetime.date) -> list[Issue]:
+    out = []
+    ends = li_retires(target)
+    if ends is None:
+        return [Issue("P3", "versions", "-", "linkedin-api Target is not a LinkedIn version",
+                      f"The row says {target!r}; LinkedIn versions are a month, YYYYMM (202609).", "linkedin-api")]
+    days = (ends - today).days
+    if days <= 0:
+        out.append(Issue("P1", "versions", "-", "LinkedIn API version retired",
+                         f"{target} retired about {ends.isoformat()}, so Bob's LinkedIn posts fail. Decide: {LI_API_HOW}.",
+                         "linkedin-api"))
+    elif days <= LI_API_WARN_DAYS:
+        out.append(Issue("P2", "versions", "-", "LinkedIn API version retires soon",
+                         f"{target} retires about {ends.isoformat()} ({days} days). Decide: {LI_API_HOW}, or {HOLD_HOW}.",
+                         "linkedin-api"))
+    if code_pins is None:
+        out.append(Issue("P3", "versions", "-", "linkedin-api not compared with the code",
+                         "No dashboard checkout was given (--dash-repo), so the version the code sends was not read.",
+                         "linkedin-api"))
+        return out
+    wrong = {f: v for f, v in code_pins.items() if v != target}
+    if wrong:
+        out.append(Issue("P3", "versions", "-", "DEPENDENCIES.md linkedin-api Target differs from the code",
+                         f"The row says {target}; " + "; ".join(f"{f} has {v or 'no version'}" for f, v in sorted(wrong.items()))
+                         + ". Correct the row, or the code (the two files must agree).", "linkedin-api"))
+    return out
+
+
+LI_KEY_HOW = ("make a new key (dashboard plan social-bob-linkedin-page-api.md §5 step 4; if LinkedIn's Token Generator "
+              "fails, ask Claude for the direct sign-in way) and install it with scripts/ops/li-page-token.py")
+
+
+def linkedin_key(host: str, agent: str, ends: int, checked: int, written: int, today: datetime.date) -> list[Issue]:
+    if written and written > checked:   # installed since the last key check: the next one (07:30) reads it
+        return []
+    if not ends:
+        return [Issue("P3", host, agent, "LinkedIn key end date not read",
+                      f"{agent} has a LinkedIn key, but the daily LinkedIn key check (browser-check.py, 07:30 UTC) has no "
+                      "end date for it from LinkedIn. Look at the 'LinkedIn key' line in its browser-status.md.", "")]
+    end = datetime.datetime.fromtimestamp(ends, datetime.timezone.utc).date()
+    days = (end - today).days
+    if days <= 0:
+        return [Issue("P1", host, agent, "LinkedIn key ran out",
+                      f"{agent}'s LinkedIn key ended {end.isoformat()}, so Bob can't post on the LinkedIn page. "
+                      f"Decide: {LI_KEY_HOW}.", "")]
+    if days < LI_KEY_WARN_DAYS:
+        return [Issue("P2", host, agent, "LinkedIn key ends soon",
+                      f"{agent}'s LinkedIn key ends {end.isoformat()} ({days} days). Decide: {LI_KEY_HOW}.", "")]
+    return []
+
+
+def read_code_pins(repo: str) -> dict[str, str] | None:
+    """The LinkedIn-Version each file pins on the dashboard's origin/main ('' when a file has none). None
+    when no checkout was given or git can't read it."""
+    if not repo:
+        return None
+    out = {}
+    for path, pattern in LI_PINS.items():
+        try:
+            text = subprocess.run(["git", "-C", repo, "show", f"origin/main:{path}"], capture_output=True,
+                                  text=True, timeout=30, check=True).stdout
+        except (OSError, subprocess.SubprocessError):
+            return None
+        m = re.search(pattern, text, re.M)
+        out[path] = m.group(1) if m else ""
+    return out
+
+
 def analyse(pins: dict[str, Pin], surveys: list[Survey], stable: tuple[str, dict[str, str]] | None,
-            latest: dict[str, Latest] | None, today: datetime.date) -> tuple[list[Issue], list[str]]:
+            latest: dict[str, Latest] | None, today: datetime.date,
+            code_pins: dict[str, str] | None = None) -> tuple[list[Issue], list[str]]:
     issues: list[Issue] = []
     add = issues.append
 
@@ -581,6 +694,13 @@ def analyse(pins: dict[str, Pin], surveys: list[Survey], stable: tuple[str, dict
         add(Issue(pri, "versions", "-", what,
                   f"Target {pins[pid].target}, newest {lat.version}: {why}. Decide: {how}, or {HOLD_HOW}.", pid))
 
+    # 4. LinkedIn: the API version the code sends, and each Agent's key.
+    if "linkedin-api" in pins:
+        issues.extend(linkedin_api(pins["linkedin-api"].target, code_pins, today))
+    for s in surveys:
+        for agent, ends, checked, written in s.keys:
+            issues.extend(linkedin_key(s.host, agent, ends, checked, written, today))
+
     # Holds: a held row's findings drop to P3 and carry the decision, until the date passes.
     for i in issues:
         p = pins.get(i.row)
@@ -642,6 +762,21 @@ def report(pins, surveys, stable, latest, issues, today) -> list[str]:
                        f" · {f.get('security_updates', '?')} security update(s) · reboot {'pending' if f.get('reboot_required') == 'yes' else 'no'}")
             if s.workers:
                 out.append(f"    document worker: " + " · ".join(f"{c} {clean(v) or '?'}" for c, _n, v in s.workers))
+    keys = [(s.host, *k) for s in surveys if not s.error for k in s.keys]
+    if keys or "linkedin-api" in pins:
+        out += ["", "LinkedIn:"]
+        if "linkedin-api" in pins:
+            r = li_retires(pins["linkedin-api"].target)
+            out.append(f"  API version {pins['linkedin-api'].target}: retires about {r.isoformat() if r else '?'}")
+        for host, agent, ends, checked, written in keys:
+            if written and written > checked:
+                say = "new LinkedIn key, checked at the next 07:30 UTC key check"
+            elif ends:
+                end = datetime.datetime.fromtimestamp(ends, datetime.timezone.utc).date()
+                say = f"LinkedIn key ends {end.isoformat()} ({(end - today).days} days)"
+            else:
+                say = "LinkedIn key end date not read yet"
+            out.append(f"  {host} {agent}: {say}")
     return out
 
 
@@ -661,6 +796,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--no-latest", action="store_true", help="skip the upstream lookups")
     ap.add_argument("--latest-cache", default="", help="JSON file keeping the weekly upstream answers")
     ap.add_argument("--today", default="", help="YYYY-MM-DD, for holds (default: today, UTC)")
+    ap.add_argument("--dash-repo", default="", help="a dashboard checkout; its origin/main is read for the LinkedIn version")
     a = ap.parse_args(argv)
     today = datetime.date.fromisoformat(a.today) if a.today else datetime.datetime.now(datetime.timezone.utc).date()
 
@@ -696,7 +832,7 @@ def main(argv: list[str] | None = None) -> int:
     if a.latest_cache and new_cache is not None:
         write(a.latest_cache + ".tmp", json.dumps(new_cache, indent=1, sort_keys=True))
         os.replace(a.latest_cache + ".tmp", a.latest_cache)
-    issues, lines = analyse(pins, surveys, stable, latest, today)
+    issues, lines = analyse(pins, surveys, stable, latest, today, read_code_pins(a.dash_repo))
     write(a.issues, "".join(i.line() + "\n" for i in issues))
     write(a.report, "\n".join(lines) + "\n")
     print("\n".join(lines))

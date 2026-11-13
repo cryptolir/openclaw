@@ -208,7 +208,8 @@ VERSIONS_ISSUES="${VERSIONS_ISSUES:-/var/tmp/agentglob-versions-issues.txt}"
 VERSIONS_CACHE="${VERSIONS_CACHE:-/var/tmp/agentglob-versions-latest.json}"
 VERSIONS_CHECK="${VERSIONS_CHECK:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/versions-check.py}"
 if [ -n "${DOC:-}" ] && printf '%s' "$DOC" | SSH_KEY="$SSH_KEY" timeout 180 python3 "$VERSIONS_CHECK" \
-     --doc - --report "$VERSIONS_REPORT" --issues "$VERSIONS_ISSUES" --latest-cache "$VERSIONS_CACHE" >/dev/null; then
+     --doc - --report "$VERSIONS_REPORT" --issues "$VERSIONS_ISSUES" --latest-cache "$VERSIONS_CACHE" \
+     --dash-repo "${DASH_REPO:-}" >/dev/null; then
   :  # its report is in the file; stderr stays in this job's log
 else
   iss "ISSUE|P2|versions|-|Version check failed|versions-check.py failed or timed out (180s), or DEPENDENCIES.md could not be read; see /var/log/agentglob-deps.log. The findings shown are from its last good run, if under 8 days old."
