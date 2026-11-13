@@ -52,9 +52,22 @@ const nodeMajor = Number.parseInt(process.versions.node.split(".")[0] ?? "", 10)
 // regressions with Vitest's vm runtime in this repo. Keep it opt-out via
 // OPENCLAW_TEST_VM_FORKS=0, and let users force-enable with =1.
 const supportsVmForks = Number.isFinite(nodeMajor) ? nodeMajor !== 24 : true;
+// ...and it is not usable in CI at all: the pool retains memory across files, so
+// `unit-fast` workers climb to the heap ceiling and the run dies with
+// "Ineffective mark-compacts near heap limit" instead of reporting. Measured
+// with CI's own settings (2 workers, 6144 MB, Node 22): vmForks on -> two
+// workers at ~5.96 GB, dead at ~130 s, no summary; vmForks off -> the whole
+// suite green in 293 s. The host had >13 GB free throughout, so this is the
+// per-process V8 limit, not the machine.
+//
+// The heap was already raised to 6144 MB for this ("V8 OOM near 4GB", ci.yml).
+// That deferred the failure rather than fixing it, and the growth has since
+// outrun the higher ceiling, so raising it again is not the answer. Same
+// treatment as Windows and Node 24 above: skip the pool where it misbehaves.
+// The leak itself is worth chasing separately — this only stops it being fatal.
 const useVmForks =
   process.env.OPENCLAW_TEST_VM_FORKS === "1" ||
-  (process.env.OPENCLAW_TEST_VM_FORKS !== "0" && !isWindows && supportsVmForks);
+  (process.env.OPENCLAW_TEST_VM_FORKS !== "0" && !isWindows && !isCI && supportsVmForks);
 const disableIsolation = process.env.OPENCLAW_TEST_NO_ISOLATE === "1";
 const runs = [
   ...(useVmForks
