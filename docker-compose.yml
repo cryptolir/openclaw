@@ -53,6 +53,13 @@ services:
       # Gemini path. Found missing on eu/mystory by the same OB-22 guard —
       # 16 code readers across two skills, zero compose entries.
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      # Per-agent Salesforce (dashboard Tools -> Salesforce). The dashboard writes
+      # these to docker.env and registers the MCP server with env: {}, so the
+      # bridge sees them only through process.env, i.e. only if listed here.
+      SALESFORCE_CONNECTION_TYPE: ${SALESFORCE_CONNECTION_TYPE:-}
+      SALESFORCE_INSTANCE_URL: ${SALESFORCE_INSTANCE_URL:-}
+      SALESFORCE_CLIENT_ID: ${SALESFORCE_CLIENT_ID:-}
+      SALESFORCE_CLIENT_SECRET: ${SALESFORCE_CLIENT_SECRET:-}
       # OpenAI Codex (ChatGPT subscription) login file. openclaw reads it from
       # $CODEX_HOME/auth.json, default ~/.codex — a path that is NOT a mount, so
       # a login done inside the container died on the next recreate. Pointing it
@@ -204,6 +211,13 @@ services:
       # Gemini path. Found missing on eu/mystory by the same OB-22 guard —
       # 16 code readers across two skills, zero compose entries.
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      # Per-agent Salesforce (dashboard Tools -> Salesforce). The dashboard writes
+      # these to docker.env and registers the MCP server with env: {}, so the
+      # bridge sees them only through process.env, i.e. only if listed here.
+      SALESFORCE_CONNECTION_TYPE: ${SALESFORCE_CONNECTION_TYPE:-}
+      SALESFORCE_INSTANCE_URL: ${SALESFORCE_INSTANCE_URL:-}
+      SALESFORCE_CLIENT_ID: ${SALESFORCE_CLIENT_ID:-}
+      SALESFORCE_CLIENT_SECRET: ${SALESFORCE_CLIENT_SECRET:-}
       # OpenAI Codex (ChatGPT subscription) login file. openclaw reads it from
       # $CODEX_HOME/auth.json, default ~/.codex — a path that is NOT a mount, so
       # a login done inside the container died on the next recreate. Pointing it
