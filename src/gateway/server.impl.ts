@@ -607,6 +607,7 @@ export async function startGatewayServer(
       chatAbortControllers,
       chatAbortedRuns: chatRunState.abortedRuns,
       chatRunBuffers: chatRunState.buffers,
+      chatRunResults: chatRunState.results,
       chatDeltaSentAt: chatRunState.deltaSentAt,
       addChatRun,
       removeChatRun,

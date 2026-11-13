@@ -92,6 +92,7 @@ const BASE_METHODS = [
   // WebChat WebSocket-native chat methods
   "chat.history",
   "chat.abort",
+  "chat.result",
   "chat.send",
   // Bot member management (dashboard → gateway)
   "bot-member.send-verification",
