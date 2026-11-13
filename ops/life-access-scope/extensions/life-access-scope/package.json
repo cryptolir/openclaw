@@ -1,0 +1,12 @@
+{
+  "name": "life-access-scope",
+  "version": "1.0.0",
+  "description": "App-user file/exfil capability boundary for the life agent",
+  "type": "module",
+  "main": "index.js",
+  "openclaw": {
+    "extensions": [
+      "index.js"
+    ]
+  }
+}
