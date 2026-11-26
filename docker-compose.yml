@@ -76,6 +76,11 @@ services:
       # §2.5): a SEPARATE write key (tickets + contacts) under its own name, so a read-only Agent
       # never holds it under HUBSPOT_TOKEN. Same allowlist rule: empty for every other agent.
       HUBSPOT_TICKETS_TOKEN: ${HUBSPOT_TICKETS_TOKEN:-}
+      # videoman's lip-sync (fal.ai, the short-character-video skill). The dashboard names it FAL_API
+      # (Skill API keys). Same allowlist rule: a docker.env key reaches the container only if listed
+      # here; empty for every other agent. It was added by hand on 1stClaw on 2026-08-31 and lost
+      # when this file was re-copied on 2026-10-26.
+      FAL_API: ${FAL_API:-}
       # EXA_API_KEY is the scout's company finder (exa-search skill). Read-only: the script it
       # backs has one hardcoded endpoint and no verb that writes or looks a person up. The name is
       # the one the dashboard's Secrets tab suggests, and the skill's `requires.env` gates on it
@@ -227,6 +232,11 @@ services:
       # §2.5): a SEPARATE write key (tickets + contacts) under its own name, so a read-only Agent
       # never holds it under HUBSPOT_TOKEN. Same allowlist rule: empty for every other agent.
       HUBSPOT_TICKETS_TOKEN: ${HUBSPOT_TICKETS_TOKEN:-}
+      # videoman's lip-sync (fal.ai, the short-character-video skill). The dashboard names it FAL_API
+      # (Skill API keys). Same allowlist rule: a docker.env key reaches the container only if listed
+      # here; empty for every other agent. It was added by hand on 1stClaw on 2026-08-31 and lost
+      # when this file was re-copied on 2026-10-26.
+      FAL_API: ${FAL_API:-}
       # EXA_API_KEY is the scout's company finder (exa-search skill). Read-only: the script it
       # backs has one hardcoded endpoint and no verb that writes or looks a person up. The name is
       # the one the dashboard's Secrets tab suggests, and the skill's `requires.env` gates on it
