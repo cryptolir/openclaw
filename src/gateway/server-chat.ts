@@ -4,6 +4,7 @@ import { isSilentReplyText, SILENT_REPLY_TOKEN } from "../auto-reply/tokens.js";
 import { loadConfig } from "../config/config.js";
 import { type AgentEventPayload, getAgentRunContext } from "../infra/agent-events.js";
 import { resolveHeartbeatVisibility } from "../infra/heartbeat-visibility.js";
+import { type ChatResultStore, createChatResultStore } from "./chat-run-results.js";
 import { loadSessionEntry } from "./session-utils.js";
 import {
   appendAssistantTextBlock,
@@ -103,6 +104,8 @@ export function createChatRunRegistry(): ChatRunRegistry {
 export type ChatRunState = {
   registry: ChatRunRegistry;
   buffers: Map<string, string>;
+  /** Finished runs, collectable by id — see chat-run-results.ts. */
+  results: ChatResultStore;
   mediaUrls: Map<string, string[]>;
   deltaSentAt: Map<string, number>;
   abortedRuns: Map<string, number>;
@@ -112,12 +115,14 @@ export type ChatRunState = {
 export function createChatRunState(): ChatRunState {
   const registry = createChatRunRegistry();
   const buffers = new Map<string, string>();
+  const results = createChatResultStore();
   const mediaUrls = new Map<string, string[]>();
   const deltaSentAt = new Map<string, number>();
   const abortedRuns = new Map<string, number>();
 
   const clear = () => {
     registry.clear();
+    results.clear();
     buffers.clear();
     mediaUrls.clear();
     deltaSentAt.clear();
@@ -126,6 +131,7 @@ export function createChatRunState(): ChatRunState {
 
   return {
     registry,
+    results,
     buffers,
     mediaUrls,
     deltaSentAt,
@@ -281,6 +287,9 @@ export function createAgentEventHandler({
       return;
     }
     chatRunState.buffers.set(clientRunId, text);
+    // Liveness is session-scoped: `chat.result` must not confirm a run
+    // exists to a caller presenting a different sessionKey.
+    chatRunState.results.markLive(clientRunId, sessionKey);
     const now = Date.now();
     const last = chatRunState.deltaSentAt.get(clientRunId) ?? 0;
     if (now - last < 150) {
@@ -343,6 +352,13 @@ export function createAgentEventHandler({
         broadcast("chat", payload);
       }
       nodeSendToSession(sessionKey, "chat", payload);
+      // Retain AFTER delivery: live subscribers are unaffected, and a
+      // browser whose request already timed out can still collect this.
+      chatRunState.results.finish(clientRunId, {
+        sessionKey,
+        state: "final",
+        text: shouldSuppressSilent ? "" : text,
+      });
       return;
     }
     const payload = {
@@ -354,6 +370,13 @@ export function createAgentEventHandler({
     };
     broadcast("chat", payload);
     nodeSendToSession(sessionKey, "chat", payload);
+    // A failure is a RESULT, not a miss: a poller must be able to stop.
+    chatRunState.results.finish(clientRunId, {
+      sessionKey,
+      state: "error",
+      text,
+      errorMessage: payload.errorMessage,
+    });
   };
 
   const resolveToolVerboseLevel = (runId: string, sessionKey?: string) => {
@@ -474,6 +497,9 @@ export function createAgentEventHandler({
         chatRunState.abortedRuns.delete(clientRunId);
         chatRunState.abortedRuns.delete(evt.runId);
         chatRunState.buffers.delete(clientRunId);
+        // An abort is not a result. Drop it so `chat.result` says `unknown`
+        // rather than reporting a cancelled run as still running.
+        chatRunState.results.drop(clientRunId);
         chatRunState.mediaUrls.delete(clientRunId);
         chatRunState.deltaSentAt.delete(clientRunId);
         if (chatLink) {

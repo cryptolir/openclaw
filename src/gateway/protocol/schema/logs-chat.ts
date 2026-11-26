@@ -55,6 +55,21 @@ export const ChatAbortParamsSchema = Type.Object(
   { additionalProperties: false },
 );
 
+/**
+ * `chat.result` — collect a finished run by id.
+ *
+ * `runId` is REQUIRED and `sessionKey` is the actual authorization: a runId is
+ * `Math.random()`-derived on the caller's side and guessable, so it is not the
+ * credential. See src/gateway/chat-run-results.ts.
+ */
+export const ChatResultParamsSchema = Type.Object(
+  {
+    sessionKey: NonEmptyString,
+    runId: NonEmptyString,
+  },
+  { additionalProperties: false },
+);
+
 export const ChatInjectParamsSchema = Type.Object(
   {
     sessionKey: NonEmptyString,
